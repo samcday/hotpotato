@@ -23,7 +23,6 @@ describe("Basic handoff", function() {
   });
 
   it ("router receives correct params", function() {
-
     var routerCalled = false;
     var routerDeferred = Promise.defer();
     hotpotato.router = function(method, url, headers) {
@@ -37,7 +36,7 @@ describe("Basic handoff", function() {
         return -1;
       }
       routerDeferred.resolve();
-      return worker.id;
+      return -1;
     };
 
     return Promise.all([routerDeferred.promise, common.spawnListenPasser(function(req) {
