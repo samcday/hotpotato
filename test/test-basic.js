@@ -1,15 +1,11 @@
-var cluster = require("cluster"),
+var Promise = require("bluebird"),
+    cluster = require("cluster"),
     hotpotato = require("../hotpotato"),
     http = require("http");
 
 var expect = require("chai").expect;
 
-function filterWorkerMessages(fn) {
-  return function(message) {
-    if (!message.test) return;
-    fn(message);
-  }
-}
+var common = require("./common");
 
 describe("Basic handoff", function() {
   before(function() {
@@ -18,44 +14,77 @@ describe("Basic handoff", function() {
     });
   });
 
-  it ("works correctly", function(done) {
-    var listener = cluster.fork({BEHAVIOR: "listen-pass"});
-    var worker = cluster.fork({BEHAVIOR: "notify-received"});
-    worker.on("message", filterWorkerMessages(function(msg) {
-      var method = msg.test.req.method,
-          url = msg.test.req.url,
-          headers = msg.test.req.headers;
-      expect(method).to.eql("OPTIONS");
-      expect(url).to.eql("/foo/bar");
-      expect(headers).to.have.property("foo", "bar");
-      
-      worker.send({test:"continue"})
-    }));
+  beforeEach(function() {
+    hotpotato.router = function() { return -1; };
+  });
 
+  afterEach(function(done) {
+    cluster.disconnect(done);
+  });
+
+  it ("router receives correct params", function() {
+
+    var routerCalled = false;
+    var routerDeferred = Promise.defer();
     hotpotato.router = function(method, url, headers) {
+      routerCalled = true;
       try {
         expect(method).to.eql("OPTIONS");
-        expect(url).to.eql("/foo/bar");
+        expect(url).to.eql("/foo/passme");
         expect(headers).to.have.property("foo", "bar");
       } catch(e) {
-        done(e);
+        routerDeferred.reject(e);
+        return -1;
       }
+      routerDeferred.resolve();
       return worker.id;
     };
 
-    listener.on("listening", function(address) {
-      var req = http.request({
-        method: "OPTIONS",
-        path: "/foo/bar",
-        port: address.port,
-        headers: {
-          foo: "bar"
-        }
-      }, function(res) {
-        done();
+    return Promise.all([routerDeferred.promise, common.spawnListenPasser(function(req) {
+      return req("OPTIONS", "/foo/passme", {foo: "bar"})
+        .then(function(response) {
+          expect(routerCalled, "Router called").to.be.true;
+        });
+    })]);
+  });
+
+  it ("works correctly", function() {
+    var worker = common.spawnNotifierWorker(function(method, url, headers) {
+      expect(method).to.eql("OPTIONS");
+      expect(url).to.eql("/foo/passme");
+      expect(headers).to.have.property("foo", "bar");
+    });
+
+    hotpotato.router = function(method, url, headers) {
+      return worker.id;
+    };
+
+    return common.spawnListenPasser(function(req) {
+      return req("OPTIONS", "/foo/passme", {foo: "bar"})
+        .then(function(response) {
+          expect(response.statusCode).to.eql(200);
+          expect(response.text).to.eql("ok");
+        });
+    });
+  });
+
+  it("only hands off first request", function() {
+    var worker = common.spawnNotifierWorker();
+
+    var passed = 0;
+    hotpotato.router = function(method, url, headers) {
+      passed++;
+      return worker.id;
+    };
+
+    return common.spawnListenPasser(function(req) {
+      return req("GET", "/foo/passme").then(function(response) {
+        expect(response.text).to.eql("ok");
+
+        return req("GET", "/foo/direct").then(function(response2) {
+          expect(response2.text).to.eql("direct");
+        });
       });
-      req.end();
-      req.on("error", done);
     });
   });
 });

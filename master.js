@@ -3,6 +3,7 @@ var Promise = require("bluebird"),
     debug   = require("debug"),
     temp    = require("temp"),
     path    = require("path"),
+    fs      = Promise.promisifyAll(require("fs")),
     msgs    = require("./messaging");
 
 var masterDebug = debug("hotpotato:master");
@@ -14,18 +15,27 @@ var serverMap = {};
 
 var socketDir = temp.mkdirSync();
 
-var createWorkerServer = function(worker) {
-  masterDebug("Setting up server for new worker #" + worker.id);
+function cleanupWorker(worker) {
+  serverMap[worker.id] = null;
+}
 
+function setupWorker(worker) {
+  worker.on("exit", cleanupWorker);
+}
+
+function createWorkerServer(worker) {
   // We won't resolve the promise until the worker has responded that they
   // have created the server.
   var serverDeferred = Promise.defer();
   serverMap[worker.id] = serverDeferred.promise;
 
   var socketFile = path.join(socketDir, "worker-" + worker.id + ".sock");
-  msgs.sendTo(worker, "createServer", { path: socketFile }).then(function() {
-    serverDeferred.resolve(socketFile);
-  });
+
+  fs.unlinkAsync(socketFile).finally(function() {
+    return msgs.sendTo(worker, "createServer", { path: socketFile }).then(function() {
+      serverDeferred.resolve(socketFile);
+    });
+  }).catch(function() {});  // Ugly I know, only way I could find to STFU bluebird.
 };
 
 msgs.handlers.routeConnection = function(ack, message) {
@@ -48,8 +58,9 @@ msgs.handlers.routeConnection = function(ack, message) {
   }
 
   serverMap[workerId].then(function(path) {
-    ack({id: "TODO", path: path});
+    ack({id: workerId, path: path});
   });
 };
 
 cluster.on("online", createWorkerServer);
+cluster.on("fork", setupWorker);

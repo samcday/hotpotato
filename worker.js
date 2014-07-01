@@ -87,7 +87,6 @@ var pass = function(req, res) {
   }).then(function(resp) {
     req.resume();
 
-
     if (resp.error) {
       workerDebug("Failed to pass off connection: " + resp.error);
       res.writeHead(500);
