@@ -1,0 +1,7 @@
+{
+    "node": true,
+    "unused": true,
+    "strict": true,
+    "eqeqeq": true,
+    "latedef": true
+}

@@ -2,9 +2,9 @@
   "name": "hotpotato",
   "version": "0.0.0",
   "description": "Hand-off HTTP connections between Node cluster workers.",
-  "main": "index.js",
+  "main": "hotpotato.js",
   "scripts": {
-    "test": "mocha"
+    "test": "mocha test/test-*.js"
   },
   "repository": {
     "type": "git",
@@ -20,5 +20,15 @@
   "bugs": {
     "url": "https://github.com/samcday/hotpotato/issues"
   },
-  "homepage": "https://github.com/samcday/hotpotato"
+  "homepage": "https://github.com/samcday/hotpotato",
+  "dependencies": {
+    "bluebird": "^2.1.3",
+    "debug": "^1.0.2",
+    "shimmer": "^1.0.0",
+    "temp": "^0.8.0"
+  },
+  "devDependencies": {
+    "chai": "^1.9.1",
+    "mocha": "^1.20.1"
+  }
 }
