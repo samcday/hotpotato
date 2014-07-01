@@ -1,0 +1,24 @@
+{
+  "name": "hotpotato",
+  "version": "0.0.0",
+  "description": "Hand-off HTTP connections between Node cluster workers.",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samcday/hotpotato.git"
+  },
+  "keywords": [
+    "cluster",
+    "http",
+    "insanity"
+  ],
+  "author": "Sam Day <me@samcday.com.au>",
+  "license": "Unlicense",
+  "bugs": {
+    "url": "https://github.com/samcday/hotpotato/issues"
+  },
+  "homepage": "https://github.com/samcday/hotpotato"
+}
