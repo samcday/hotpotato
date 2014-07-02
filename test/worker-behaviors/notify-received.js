@@ -2,6 +2,7 @@
 
 var hotpotato = require("../../hotpotato");
 var server = require("http").createServer();
+var cluster = require("cluster");
 
 hotpotato.server(server);
 
@@ -15,7 +16,7 @@ server.on("request", function(req, res) {
   process.on("message", function(msg) {
     if (msg && msg.test && msg.test === "continue") {
       res.writeHead(200);
-      res.end("ok");
+      res.end("worker" + cluster.worker.id);
     }
   });
 });

@@ -6,6 +6,8 @@ var Promise = require("bluebird"),
     fs      = Promise.promisifyAll(require("fs")),
     msgs    = require("./messaging");
 
+// TODO: handle edge case of router sending request to originating worker.
+
 var masterDebug = debug("hotpotato:master");
 
 temp.track();
@@ -60,6 +62,20 @@ msgs.handlers.routeConnection = function(ack, message) {
   serverMap[workerId].then(function(path) {
     ack({id: workerId, path: path});
   });
+};
+
+msgs.handlers.passConnection = function(ack, message, fd) {
+  masterDebug("Passing a connection off.");
+
+  var workerId = message.id;
+  var worker = cluster.workers[workerId];
+
+  if (!worker) {
+    // TODO: handle me.
+    masterDebug("Tried to pass a connection off to a nonexistent worker.");
+  }
+
+  msgs.sendTo(worker, "connection", {}, fd);
 };
 
 cluster.on("online", createWorkerServer);

@@ -1,6 +1,7 @@
 var Promise = require("bluebird"),
     cluster = require("cluster"),
-    http    = require("http");
+    http    = require("http"),
+    shimmer = require("shimmer");
 
 exports.spawnNotifierWorker = function(notify) {
   var worker = cluster.fork({BEHAVIOR: "notify-received"});
@@ -21,6 +22,8 @@ exports.spawnNotifierWorker = function(notify) {
   return worker;
 }
 
+var agent = new http.Agent({maxSockets: 1});
+
 exports.spawnListenPasser = function(cb) {
   var listener = cluster.fork({BEHAVIOR: "listen-pass"});
   var deferred = Promise.defer();
@@ -28,6 +31,7 @@ exports.spawnListenPasser = function(cb) {
     var requestFn = function(method, url, headers) {
       var reqDeferred = Promise.defer();
       var req = http.request({
+        agent: agent,
         port: address.port,
         method: method,
         path: url,
@@ -45,7 +49,8 @@ exports.spawnListenPasser = function(cb) {
       req.end();
       return reqDeferred.promise;
     };
-    deferred.resolve(cb(requestFn));
+    requestFn.port = address.port;
+    deferred.resolve(cb(listener, requestFn));
   });
   return deferred.promise;
 }

@@ -5,19 +5,27 @@
 
 var hotpotato = require("../hotpotato"),
     http = require("http"),
-    cluster = require("cluster");
+    cluster = require("cluster"),
+    url = require("url");
 
 if (cluster.isMaster) {
-  hotpotato.router = function(method, url, headers) {
-    return 1;
+  hotpotato.router = function(method, reqUrl, headers) {
+    var workerIds = Object.keys(cluster.workers);
+    reqUrl = url.parse(reqUrl, true);
+    return reqUrl.query.worker;
   };
 
   cluster.fork();
   cluster.fork();
+  cluster.fork();
 } else {
   var server = http.createServer(function(req, res) {
-    if (cluster.worker.id !== 1) {
-        return hotpotato.pass(req, res);
+    var reqUrl = url.parse(req.url, true);
+
+    if (!req.headers["x-hotpotato-worker"]) {
+      if (reqUrl.query.worker && parseInt(reqUrl.query.worker, 10) !== cluster.worker.id) {
+        return hotpotato.passConnection(req, res);
+      }
     }
 
     var body = [];
@@ -38,6 +46,7 @@ if (cluster.isMaster) {
 
   hotpotato.server(server);
 
-  if(cluster.worker.id > 1)
+  if(cluster.worker.id === 1) {
     server.listen(3000);
+  }
 }

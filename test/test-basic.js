@@ -3,8 +3,13 @@ var Promise = require("bluebird"),
     hotpotato = require("../hotpotato"),
     http = require("http");
 
-var expect = require("chai").expect;
+// TODO: test larger chunked bodies are correctly handled.
+// TODO: test pipelined requests.
+// TODO: test passing to a nonexistent worker.
+// TODO: test passing to worker that is failing.
+// TODO: test timeouts
 
+var expect = require("chai").expect;
 var common = require("./common");
 
 describe("Basic handoff", function() {
@@ -18,8 +23,10 @@ describe("Basic handoff", function() {
     hotpotato.router = function() { return -1; };
   });
 
-  afterEach(function(done) {
-    cluster.disconnect(done);
+  afterEach(function() {
+    Object.keys(cluster.workers).forEach(function(workerId) {
+      cluster.workers[workerId].kill();
+    });
   });
 
   it ("router receives correct params", function() {
@@ -39,7 +46,7 @@ describe("Basic handoff", function() {
       return -1;
     };
 
-    return Promise.all([routerDeferred.promise, common.spawnListenPasser(function(req) {
+    return Promise.all([routerDeferred.promise, common.spawnListenPasser(function(listenWorker, req) {
       return req("OPTIONS", "/foo/passme", {foo: "bar"})
         .then(function(response) {
           expect(routerCalled, "Router called").to.be.true;
@@ -58,11 +65,11 @@ describe("Basic handoff", function() {
       return worker.id;
     };
 
-    return common.spawnListenPasser(function(req) {
+    return common.spawnListenPasser(function(listenWorker, req) {
       return req("OPTIONS", "/foo/passme", {foo: "bar"})
         .then(function(response) {
           expect(response.statusCode).to.eql(200);
-          expect(response.text).to.eql("ok");
+          expect(response.text).to.eql("worker" + worker.id);
         });
     });
   });
@@ -76,14 +83,33 @@ describe("Basic handoff", function() {
       return worker.id;
     };
 
-    return common.spawnListenPasser(function(req) {
+    return common.spawnListenPasser(function(listenWorker, req) {
       return req("GET", "/foo/passme").then(function(response) {
-        expect(response.text).to.eql("ok");
+        expect(response.text).to.eql("worker" + worker.id);
 
         return req("GET", "/foo/direct").then(function(response2) {
-          expect(response2.text).to.eql("direct");
+          expect(response2.text).to.eql("worker" + listenWorker.id);
         });
       });
+    });
+  });
+
+  it("hands off connection correctly", function() {
+    var worker = common.spawnNotifierWorker();
+
+    hotpotato.router = function(method, url, headers) {
+      return worker.id;
+    }
+
+    return common.spawnListenPasser(function(listenWorker, req) {
+      return Promise.all([
+        req("GET", "/foo/passall").then(function(response) {
+          expect(response.text).to.eql("worker" + worker.id);
+        }),
+        req("GET", "/foo/arbitrary").then(function(response) {
+          expect(response.text).to.eql("worker" + worker.id);
+        })
+      ]);
     });
   });
 });
