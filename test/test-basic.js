@@ -1,7 +1,8 @@
+"use strict";
+
 var Promise = require("bluebird"),
     cluster = require("cluster"),
-    hotpotato = require("../hotpotato"),
-    http = require("http");
+    hotpotato = require("../hotpotato");
 
 // TODO: test larger chunked bodies are correctly handled.
 // TODO: test pipelined requests.
@@ -29,7 +30,7 @@ describe("Basic handoff", function() {
     });
   });
 
-  it ("router receives correct params", function() {
+  it("router receives correct params", function() {
     var routerCalled = false;
     var routerDeferred = Promise.defer();
     hotpotato.router = function(method, url, headers) {
@@ -48,7 +49,7 @@ describe("Basic handoff", function() {
 
     return Promise.all([routerDeferred.promise, common.spawnListenPasser(function(listenWorker, req) {
       return req("OPTIONS", "/foo/passme", {foo: "bar"})
-        .then(function(response) {
+        .then(function() {
           expect(routerCalled, "Router called").to.be.true;
         });
     })]);
@@ -61,7 +62,7 @@ describe("Basic handoff", function() {
       expect(headers).to.have.property("foo", "bar");
     });
 
-    hotpotato.router = function(method, url, headers) {
+    hotpotato.router = function() {
       return worker.id;
     };
 
@@ -78,7 +79,7 @@ describe("Basic handoff", function() {
     var worker = common.spawnNotifierWorker();
 
     var passed = 0;
-    hotpotato.router = function(method, url, headers) {
+    hotpotato.router = function() {
       passed++;
       return worker.id;
     };
@@ -97,9 +98,9 @@ describe("Basic handoff", function() {
   it("hands off connection correctly", function() {
     var worker = common.spawnNotifierWorker();
 
-    hotpotato.router = function(method, url, headers) {
+    hotpotato.router = function() {
       return worker.id;
-    }
+    };
 
     return common.spawnListenPasser(function(listenWorker, req) {
       return Promise.all([

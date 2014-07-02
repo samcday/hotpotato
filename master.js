@@ -1,10 +1,12 @@
+"use strict";
+
 var Promise = require("bluebird"),
     cluster = require("cluster"),
     debug   = require("debug"),
     temp    = require("temp"),
     path    = require("path"),
     fs      = Promise.promisifyAll(require("fs")),
-    msgs    = require("./messaging");
+    clusterphone = require("clusterphone").ns("hotpotato");
 
 // TODO: handle edge case of router sending request to originating worker.
 
@@ -34,13 +36,13 @@ function createWorkerServer(worker) {
   var socketFile = path.join(socketDir, "worker-" + worker.id + ".sock");
 
   fs.unlinkAsync(socketFile).finally(function() {
-    return msgs.sendTo(worker, "createServer", { path: socketFile }).then(function() {
+    return clusterphone.sendTo(worker, "createServer", { path: socketFile }).then(function() {
       serverDeferred.resolve(socketFile);
     });
   }).catch(function() {});  // Ugly I know, only way I could find to STFU bluebird.
-};
+}
 
-msgs.handlers.routeConnection = function(ack, message) {
+clusterphone.handlers.routeConnection = function(message) {
   masterDebug("Routing connection.");
 
   var workerId;
@@ -56,15 +58,15 @@ msgs.handlers.routeConnection = function(ack, message) {
 
   if (!worker) {
     masterDebug("Router directed connection to nonexistent worker id.");
-    return ack({error: "No worker found."});
+    return Promise.resolve({error: "No worker found."});
   }
 
-  serverMap[workerId].then(function(path) {
-    ack({id: workerId, path: path});
+  return serverMap[workerId].then(function(path) {
+    return {id: workerId, path: path};
   });
 };
 
-msgs.handlers.passConnection = function(ack, message, fd) {
+clusterphone.handlers.passConnection = function(message, fd) {
   masterDebug("Passing a connection off.");
 
   var workerId = message.id;
@@ -75,7 +77,7 @@ msgs.handlers.passConnection = function(ack, message, fd) {
     masterDebug("Tried to pass a connection off to a nonexistent worker.");
   }
 
-  msgs.sendTo(worker, "connection", {}, fd);
+  clusterphone.sendTo(worker, "connection", {}, fd);
 };
 
 cluster.on("online", createWorkerServer);

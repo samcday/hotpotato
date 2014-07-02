@@ -1,10 +1,12 @@
+"use strict";
+
 var Promise = require("bluebird"),
     net     = require("net"),
     http    = require("http"),
     cluster = require("cluster"),
     debug   = require("debug"),
     shimmer = require("shimmer"),
-    msgs    = require("./messaging");
+    clusterphone = require("clusterphone").ns("hotpotato");
 
 // TODO: use a separate agent for all proxy requests.
 
@@ -57,15 +59,13 @@ function setupSideChannelServer(socketPath) {
   sideChannelServer.on("listening", deferred.callback);
 
   return deferred.promise;
+}
+
+clusterphone.handlers.createServer = function(msg) {
+  return setupSideChannelServer(msg.path);
 };
 
-msgs.handlers.createServer = function(ack, msg) {
-  setupSideChannelServer(msg.path).then(function() {
-    ack();
-  });
-};
-
-msgs.handlers.connection = function(ack, msg, socket) {
+clusterphone.handlers.connection = function(msg, socket) {
   workerDebug("Got a new connection passed to me.");
 
   if (!targetServer) {
@@ -90,7 +90,7 @@ function connectionHandler(connection) {
     return function() {
       connection._hotpotato.parsing = true;
       original.apply(this, arguments);
-    }
+    };
   };
 
   shimmer.wrap(connection.parser, "onHeaders", shim);
@@ -143,7 +143,7 @@ function handlePassingRequest(req, res) {
         workerDebug("Passing off a connection.");
         // The connection needs to be passed to the new worker, *and* this is 
         // a good time to do it. So let's do it.
-        msgs.sendToMaster("passConnection", { id: req._hotpotato.targetWorker }, socket);
+        clusterphone.sendToMaster("passConnection", { id: req._hotpotato.targetWorker }, socket);
 
         // Cleanup the socket from our end.
         socket.emit("close");
@@ -207,7 +207,7 @@ function pass(passConnection, req, res) {
   // where to route this request to.
   req.pause();
 
-  msgs.sendToMaster("routeConnection", {
+  clusterphone.sendToMaster("routeConnection", {
     method: req.method,
     url: req.url,
     headers: req.headers
@@ -228,7 +228,7 @@ function pass(passConnection, req, res) {
 
     handlePassingRequest(req, res);
   });
-};
+}
 
 function setServer(server) {
   if (targetServer) {
@@ -260,7 +260,7 @@ function setServer(server) {
       return original.apply(this, arguments);
     };
   });
-};
+}
 
 exports.passRequest = pass.bind(null, false);
 exports.passConnection = pass.bind(null, true);
