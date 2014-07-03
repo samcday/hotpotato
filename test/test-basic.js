@@ -2,10 +2,10 @@
 
 var Promise = require("bluebird"),
     cluster = require("cluster"),
+    net     = require("net"),
     hotpotato = require("../hotpotato");
 
 // TODO: test larger chunked bodies are correctly handled.
-// TODO: test pipelined requests.
 // TODO: test passing to a nonexistent worker.
 // TODO: test passing to worker that is failing.
 // TODO: test timeouts
@@ -111,6 +111,102 @@ describe("Basic handoff", function() {
           expect(response.text).to.eql("worker" + worker.id);
         })
       ]);
+    });
+  });
+
+  it("handles request handoffs from pipelined requests correctly", function() {
+    var worker = common.spawnNotifierWorker();
+
+    hotpotato.router = function() {
+      return worker.id;
+    };
+
+    var HTTPParser = process.binding('http_parser').HTTPParser;
+
+    return common.spawnListenPasser(function(listenWorker, req) {
+      // Node http impl doesn't do pipelining.
+      var deferred = Promise.defer();
+      var conn = net.createConnection(req.port);
+
+      conn.write("GET /passme HTTP/1.1\r\n\r\n");
+      conn.write("GET /foo HTTP/1.1\r\n\r\n");
+
+      var parser = new HTTPParser(HTTPParser.RESPONSE);
+
+      conn.on("data", function(data) {
+        parser.execute(data, 0, data.length);
+      });
+
+      // If this test starts being flakey, we have to stop being lazy and handle
+      // onHeaders too.
+      var responses = [];
+      parser.onHeadersComplete = function(info) {
+        responses.push(info);
+        info.body = "";
+      };
+      parser.onBody = function(body, start, len) {
+        responses[responses.length-1].body += body.slice(start, start + len);
+      };
+      parser.onMessageComplete = function() {
+        if (responses.length === 2) {
+          var response1 = responses[0],
+              response2 = responses[1];
+
+          expect(response1.body).to.eql("worker" + worker.id);
+          expect(response2.body).to.eql("worker" + listenWorker.id);
+          deferred.resolve();
+        }
+      };
+
+      return deferred.promise;
+    });
+  });
+
+  it("handles connection handoffs from pipelined requests correctly", function() {
+    var worker = common.spawnNotifierWorker();
+
+    hotpotato.router = function() {
+      return worker.id;
+    };
+
+    var HTTPParser = process.binding('http_parser').HTTPParser;
+
+    return common.spawnListenPasser(function(listenWorker, req) {
+      // Node http impl doesn't do pipelining.
+      var deferred = Promise.defer();
+      var conn = net.createConnection(req.port);
+
+      conn.write("GET /passall HTTP/1.1\r\n\r\n");
+      conn.write("GET /foo HTTP/1.1\r\n\r\n");
+
+      var parser = new HTTPParser(HTTPParser.RESPONSE);
+
+      conn.on("data", function(data) {
+        parser.execute(data, 0, data.length);
+      });
+
+      // If this test starts being flakey, we have to stop being lazy and handle
+      // onHeaders too.
+      var responses = [];
+      parser.onHeadersComplete = function(info) {
+        responses.push(info);
+        info.body = "";
+      };
+      parser.onBody = function(body, start, len) {
+        responses[responses.length-1].body += body.slice(start, start + len);
+      };
+      parser.onMessageComplete = function() {
+        if (responses.length === 2) {
+          var response1 = responses[0],
+              response2 = responses[1];
+
+          expect(response1.body).to.eql("worker" + worker.id);
+          expect(response2.body).to.eql("worker" + worker.id);
+          deferred.resolve();
+        }
+      };
+
+      return deferred.promise;
     });
   });
 });

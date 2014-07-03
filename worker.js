@@ -9,6 +9,7 @@ var Promise = require("bluebird"),
     clusterphone = require("clusterphone").ns("hotpotato");
 
 // TODO: use a separate agent for all proxy requests.
+// TODO: clean up socket state on finished pass.
 
 var worker = cluster.worker;
 var workerDebug = debug("hotpotato:worker" + worker.id);
