@@ -2,15 +2,13 @@
 
 var Promise = require("bluebird"),
     cluster = require("cluster"),
-    debug   = require("debug"),
+    debug   = require("debug")("hotpotato:master"),
     temp    = require("temp"),
     path    = require("path"),
     fs      = Promise.promisifyAll(require("fs")),
     clusterphone = require("clusterphone").ns("hotpotato");
 
 // TODO: handle edge case of router sending request to originating worker.
-
-var masterDebug = debug("hotpotato:master");
 
 temp.track();
 
@@ -42,64 +40,69 @@ function createWorkerServer(worker) {
   }).catch(function() {});  // Ugly I know, only way I could find to STFU bluebird.
 }
 
+function runRouter(method, url, headers) {
+  var deferred = Promise.defer();
+
+  var routerMethod = Promise.method(exports.router);
+  deferred.resolve(routerMethod(method, url, headers, deferred.callback));
+
+  return deferred.promise.catch(function() {
+    debug("Error running connection router.");
+    debug(e);
+    return -1;
+  }).then(function(workerId) {
+    var worker = cluster.workers[workerId];
+    if (!worker) {
+      debug("Router directed connection to nonexistent worker id.");
+      return null;
+    }
+    return worker;
+  });
+}
+
 clusterphone.handlers.routeConnection = function(message) {
-  masterDebug("Routing connection.");
+  debug("Routing connection.");
 
-  var workerId;
-  try {
-    workerId = exports.router(message.method, message.url, message.headers);
-  } catch(e) {
-    masterDebug("Error running connection router.");
-    masterDebug(e);
-    workerId = -1;
-  }
+  return runRouter(message.method, message.url, message.headers).then(function(worker) {
+    if (!worker) {
+      return {error: "No worker found."};
+    }
 
-  var worker = cluster.workers[workerId];
-
-  if (!worker) {
-    masterDebug("Router directed connection to nonexistent worker id.");
-    return Promise.resolve({error: "No worker found."});
-  }
-
-  return serverMap[workerId].then(function(path) {
-    return {id: workerId, path: path};
+    return serverMap[worker.id].then(function(path) {
+      return {id: worker.id, path: path};
+    });
   });
 };
 
-clusterphone.handlers.passConnection = function(message, fd) {
-  masterDebug("Passing a connection off.");
+clusterphone.handlers.passConnection = function(message, connection) {
+  debug("Passing a connection off.");
 
   var workerId = message.id;
   var worker = cluster.workers[workerId];
 
   if (!worker) {
-    // TODO: handle me.
-    masterDebug("Tried to pass a connection off to a nonexistent worker.");
+    debug("Tried to pass a connection off to a nonexistent worker.");
+    // TODO: handle this better? Form a basic 503 response?
+    connection.destroy();
   }
 
-  clusterphone.sendTo(worker, "connection", {}, fd);
+  clusterphone.sendTo(worker, "connection", {}, connection);
+
+  return Promise.resolve();
 };
 
-clusterphone.handlers.passUpgrade = function(message, fd) {
-  masterDebug("Routing upgrade.");
+clusterphone.handlers.passUpgrade = function(message, socket) {
+  debug("Routing upgrade.");
 
-  var workerId;
-  try {
-    workerId = exports.router(message.method, message.url, message.headers);
-  } catch(e) {
-    masterDebug("Error running connection router.");
-    masterDebug(e);
-    workerId = -1;
-  }
+  return runRouter(message.method, message.url, message.headers).then(function(worker) {
+    if (!worker) {
+      debug("Router directed upgrade to nonexistent worker id.");
+      socket.destroy();
+      return;
+    }
 
-  var worker = cluster.workers[workerId];
-
-  if (!worker) {
-    masterDebug("Router directed connection to nonexistent worker id.");
-    return Promise.resolve({error: "No worker found."});
-  }
-
-  clusterphone.sendTo(worker, "upgrade", message, fd);
+    clusterphone.sendTo(worker, "upgrade", message, socket);
+  });
 };
 
 cluster.on("online", createWorkerServer);

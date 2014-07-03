@@ -10,6 +10,7 @@ var Promise = require("bluebird"),
 
 // TODO: use a separate agent for all proxy requests.
 // TODO: clean up socket state on finished pass.
+// TODO: figure out how we handle failed passes gracefully.
 
 var worker = cluster.worker;
 var workerDebug = debug("hotpotato:worker" + worker.id);
@@ -304,16 +305,7 @@ function passUpgrade(req, socket, head) {
     httpVersionMinor: req.httpVersionMinor,
     httpVersionMajor: req.httpVersionMajor,
     head: head ? head.toString("base64") : null,
-  }, socket).then(function(reply) {
-    if (reply.error) {
-      // TODO: handle this better.
-      workerDebug("Failed to pass off upgrade: " + reply.error);
-      socket.end();
-      return;
-    }
-
-    workerDebug("Passed off upgrade successfully.");
-  });
+  }, socket);
 }
 
 exports.passRequest = pass.bind(null, false);
