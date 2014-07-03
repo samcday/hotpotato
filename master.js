@@ -80,5 +80,27 @@ clusterphone.handlers.passConnection = function(message, fd) {
   clusterphone.sendTo(worker, "connection", {}, fd);
 };
 
+clusterphone.handlers.passUpgrade = function(message, fd) {
+  masterDebug("Routing upgrade.");
+
+  var workerId;
+  try {
+    workerId = exports.router(message.method, message.url, message.headers);
+  } catch(e) {
+    masterDebug("Error running connection router.");
+    masterDebug(e);
+    workerId = -1;
+  }
+
+  var worker = cluster.workers[workerId];
+
+  if (!worker) {
+    masterDebug("Router directed connection to nonexistent worker id.");
+    return Promise.resolve({error: "No worker found."});
+  }
+
+  clusterphone.sendTo(worker, "upgrade", message, fd);
+};
+
 cluster.on("online", createWorkerServer);
 cluster.on("fork", setupWorker);

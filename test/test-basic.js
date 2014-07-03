@@ -9,6 +9,7 @@ var Promise = require("bluebird"),
 // TODO: test passing to a nonexistent worker.
 // TODO: test passing to worker that is failing.
 // TODO: test timeouts
+// TODO: test websockets
 
 var expect = require("chai").expect;
 var common = require("./common");

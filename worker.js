@@ -78,6 +78,31 @@ clusterphone.handlers.connection = function(msg, socket) {
   targetServer.emit("connection", socket);
 };
 
+clusterphone.handlers.upgrade = function(msg, socket) {
+  workerDebug("Got a new upgrade passed to me.");
+
+  if (!targetServer) {
+    // TODO: handle me.
+    workerDebug("No target server to handle upgrade.");
+    socket.close();
+    return;
+  }
+
+  // Reconstruct the request.
+  var req = new http.IncomingMessage(socket);
+  req.httpVersionMinor = msg.httpVersionMinor;
+  req.httpVersionMajor = msg.httpVersionMajor;
+  req.httpVersion = msg.httpVersionMajor + "." + msg.httpVersionMinor;
+  req.headers = msg.headers;
+  req.url = msg.url;
+
+  var head;
+  if (msg.head) {
+    head = new Buffer(msg.head, "base64");
+  }
+  targetServer.emit("upgrade", req, socket, head);
+};
+
 function connectionHandler(connection) {
   connection._hotpotato = {
     pendingReqs: []
@@ -263,6 +288,35 @@ function setServer(server) {
   });
 }
 
+function passUpgrade(req, socket, head) {
+  workerDebug("Passing off an upgrade.");
+
+  if (req._hotpotato) {
+    throw new Error("Looks like passUpgrade was called on same request more than once.");
+  }
+
+  req._hotpotato = {};
+
+  clusterphone.sendToMaster ("passUpgrade", {
+    method: req.method,
+    url: req.url,
+    headers: req.headers,
+    httpVersionMinor: req.httpVersionMinor,
+    httpVersionMajor: req.httpVersionMajor,
+    head: head ? head.toString("base64") : null,
+  }, socket).then(function(reply) {
+    if (reply.error) {
+      // TODO: handle this better.
+      workerDebug("Failed to pass off upgrade: " + reply.error);
+      socket.end();
+      return;
+    }
+
+    workerDebug("Passed off upgrade successfully.");
+  });
+}
+
 exports.passRequest = pass.bind(null, false);
 exports.passConnection = pass.bind(null, true);
+exports.passUpgrade = passUpgrade;
 exports.server = setServer;

@@ -1,0 +1,10 @@
+{
+  "name": "hotpotato-examples",
+  "version": "0.0.0",
+  "description": "",
+  "private": true,
+  "dependencies": {
+    "websocket": "^1.0.8",
+    "ws": "^0.4.31"
+  }
+}
