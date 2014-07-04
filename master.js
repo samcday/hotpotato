@@ -18,11 +18,11 @@ var serverMap = {};
 var socketDir = temp.mkdirSync();
 
 function cleanupWorker(worker) {
-  serverMap[worker.id] = null;
+  delete serverMap[worker.id];
 }
 
 function setupWorker(worker) {
-  worker.on("exit", cleanupWorker);
+  worker.on("exit", cleanupWorker.bind(null, worker));
 }
 
 function createWorkerServer(worker) {
