@@ -8,6 +8,8 @@ var Promise = require("bluebird"),
     shimmer = require("shimmer"),
     clusterphone = require("clusterphone").ns("hotpotato");
 
+var HTTPParser = process.binding('http_parser').HTTPParser;
+
 // TODO: use a separate agent for all proxy requests.
 // TODO: clean up socket state on finished pass.
 // TODO: figure out how we handle failed passes gracefully.
@@ -120,8 +122,13 @@ function connectionHandler(connection) {
     };
   };
 
-  shimmer.wrap(connection.parser, "onHeaders", shim);
-  shimmer.wrap(connection.parser, "onHeadersComplete", shim);
+  if (HTTPParser.kOnHeadersComplete) {
+    shimmer.wrap(connection.parser, HTTPParser.kOnHeaders, shim);
+    shimmer.wrap(connection.parser, HTTPParser.kOnHeadersComplete, shim);
+  } else {
+    shimmer.wrap(connection.parser, "onHeaders", shim);
+    shimmer.wrap(connection.parser, "onHeadersComplete", shim);
+  }
 }
 
 function handlePassingRequest(req, res) {
