@@ -1,6 +1,6 @@
 {
   "name": "hotpotato",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Hand-off HTTP connections between Node cluster workers.",
   "main": "hotpotato.js",
   "scripts": {
