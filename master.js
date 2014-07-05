@@ -34,7 +34,7 @@ function createWorkerServer(worker) {
   var socketFile = path.join(socketDir, "worker-" + worker.id + ".sock");
 
   fs.unlinkAsync(socketFile).finally(function() {
-    return clusterphone.sendTo(worker, "createServer", { path: socketFile }).then(function() {
+    return clusterphone.sendTo(worker, "createServer", socketFile).ackd().then(function() {
       serverDeferred.resolve(socketFile);
     });
   }).catch(function() {});  // Ugly I know, only way I could find to STFU bluebird.
@@ -46,7 +46,7 @@ function runRouter(method, url, headers) {
   var routerMethod = Promise.method(exports.router);
   deferred.resolve(routerMethod(method, url, headers, deferred.callback));
 
-  return deferred.promise.catch(function() {
+  return deferred.promise.catch(function(e) {
     debug("Error running connection router.");
     debug(e);
     return -1;
@@ -60,12 +60,16 @@ function runRouter(method, url, headers) {
   });
 }
 
-clusterphone.handlers.routeConnection = function(message) {
-  debug("Routing connection.");
+clusterphone.handlers.routeRequest = function(worker, requestData) {
+  debug("Routing request.");
 
-  return runRouter(message.method, message.url, message.headers).then(function(worker) {
+  var method  = requestData.method,
+      url     = requestData.url,
+      headers = requestData.headers;
+
+  return runRouter(method, url, headers).then(function(worker) {
     if (!worker) {
-      return {error: "No worker found."};
+      throw new Error("No worker found.");
     }
 
     return serverMap[worker.id].then(function(path) {
@@ -74,34 +78,39 @@ clusterphone.handlers.routeConnection = function(message) {
   });
 };
 
-clusterphone.handlers.passConnection = function(message, connection) {
+clusterphone.handlers.passConnection = function(worker, destWorkerId, connection) {
   debug("Passing a connection off.");
 
-  var workerId = message.id;
-  var worker = cluster.workers[workerId];
+  var destWorker = cluster.workers[destWorkerId];
 
-  if (!worker) {
+  if (!destWorker) {
+    // Presumably, the originating worker proxied a request to dest worker
+    // that caused it to error and terminate by the time we got around to 
+    // sending it the connection.
     debug("Tried to pass a connection off to a nonexistent worker.");
+
     // TODO: handle this better? Form a basic 503 response?
     connection.destroy();
   }
 
-  clusterphone.sendTo(worker, "connection", {}, connection);
-
-  return Promise.resolve();
+  return clusterphone.sendTo(destWorker, "connection", {}, connection).ackd();
 };
 
-clusterphone.handlers.passUpgrade = function(message, socket) {
+clusterphone.handlers.passUpgrade = function(requestData, socket) {
   debug("Routing upgrade.");
 
-  return runRouter(message.method, message.url, message.headers).then(function(worker) {
+  var method  = requestData.method,
+      url     = requestData.url,
+      headers = requestData.headers;
+
+  return runRouter(method, url, headers).then(function(worker) {
     if (!worker) {
-      debug("Router directed upgrade to nonexistent worker id.");
+      debug("Worker not found.");
       socket.destroy();
       return;
     }
 
-    clusterphone.sendTo(worker, "upgrade", message, socket);
+    return clusterphone.sendTo(worker, "upgrade", requestData, socket).ackd();
   });
 };
 

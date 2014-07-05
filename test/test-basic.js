@@ -7,7 +7,9 @@ var Promise = require("bluebird"),
 
 // TODO: test larger chunked bodies are correctly handled.
 // TODO: test passing to a nonexistent worker.
-// TODO: test passing to worker that is failing.
+// TODO: test passing a request to a dying worker.
+// TODO: test passing a connection to a dying worker.
+// TODO: test passing a request to a worker that is timing out.
 // TODO: test timeouts
 // TODO: test websockets
 

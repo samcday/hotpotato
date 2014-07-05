@@ -6,6 +6,7 @@ var Promise = require("bluebird"),
     cluster = require("cluster"),
     debug   = require("debug"),
     shimmer = require("shimmer"),
+    debug   = debug("hotpotato:worker" + cluster.worker.id),
     clusterphone = require("clusterphone").ns("hotpotato");
 
 var HTTPParser = process.binding('http_parser').HTTPParser;
@@ -13,9 +14,6 @@ var HTTPParser = process.binding('http_parser').HTTPParser;
 // TODO: use a separate agent for all proxy requests.
 // TODO: clean up socket state on finished pass.
 // TODO: figure out how we handle failed passes gracefully.
-
-var worker = cluster.worker;
-var workerDebug = debug("hotpotato:worker" + worker.id);
 
 // This will run a http.Server listening on the separate socket the master
 // directs us to.
@@ -27,7 +25,7 @@ var sideChannelServer;
 var targetServer;
 
 function setupSideChannelServer(socketPath) {
-  workerDebug("Creating side-channel server");
+  debug("Creating side-channel server");
 
   var deferred = Promise.defer();
 
@@ -45,7 +43,7 @@ function setupSideChannelServer(socketPath) {
 
   sideChannelServer.on("request", function(req, res) {
     if (!targetServer) {
-      workerDebug("Side channel request received, but no dest server to forward to.");
+      debug("Side channel request received, but no dest server to forward to.");
       // TODO: properly handle this.
       req.abort();
       res.writeHead(500);
@@ -65,45 +63,50 @@ function setupSideChannelServer(socketPath) {
   return deferred.promise;
 }
 
-clusterphone.handlers.createServer = function(msg) {
-  return setupSideChannelServer(msg.path);
+clusterphone.handlers.createServer = function(path) {
+  return setupSideChannelServer(path);
 };
 
-clusterphone.handlers.connection = function(msg, socket) {
-  workerDebug("Got a new connection passed to me.");
+clusterphone.handlers.connection = function(_, socket) {
+  debug("Got a new connection passed to me.");
 
   if (!targetServer) {
     // TODO: handle me.
-    workerDebug("Ouch. No target server for a newly handed off connection.");
+    debug("Ouch. No target server for a newly handed off connection.");
     return;
   }
 
   targetServer.emit("connection", socket);
+
+  return Promise.resolve();
 };
 
-clusterphone.handlers.upgrade = function(msg, socket) {
-  workerDebug("Got a new upgrade passed to me.");
+clusterphone.handlers.upgrade = function(requestData, socket) {
+  debug("Got a new upgrade passed to me.");
 
   if (!targetServer) {
     // TODO: handle me.
-    workerDebug("No target server to handle upgrade.");
+    debug("No target server to handle upgrade.");
     socket.close();
     return;
   }
 
   // Reconstruct the request.
   var req = new http.IncomingMessage(socket);
-  req.httpVersionMinor = msg.httpVersionMinor;
-  req.httpVersionMajor = msg.httpVersionMajor;
-  req.httpVersion = msg.httpVersionMajor + "." + msg.httpVersionMinor;
-  req.headers = msg.headers;
-  req.url = msg.url;
+  req.httpVersionMinor = requestData.httpVersionMinor;
+  req.httpVersionMajor = requestData.httpVersionMajor;
+  req.httpVersion = req.httpVersionMajor + "." + req.httpVersionMinor;
+  req.headers = requestData.headers;
+  req.url = requestData.url;
 
   var head;
-  if (msg.head) {
-    head = new Buffer(msg.head, "base64");
+  if (requestData.head) {
+    head = new Buffer(requestData.head, "base64");
   }
+
   targetServer.emit("upgrade", req, socket, head);
+
+  return Promise.resolve();
 };
 
 function connectionHandler(connection) {
@@ -150,7 +153,7 @@ function handlePassingRequest(req, res) {
 
   proxyReq.on("error", function() {
     // TODO: cleanup here.
-    workerDebug("Incoming request errored while we were proxying it.");
+    debug("Incoming request errored while we were proxying it.");
   });
 
   // Once we've finished sending the request over the wire, we might want to
@@ -174,13 +177,16 @@ function handlePassingRequest(req, res) {
     proxyResp.pipe(res);
     proxyResp.on("end", function() {
       if (socket._hotpotato.passConnection && !socket._hotpotato.parsing && !socket._hotpotato.pendingReqs.length) {
-        workerDebug("Passing off a connection.");
+        debug("Passing off a connection.");
         // The connection needs to be passed to the new worker, *and* this is 
         // a good time to do it. So let's do it.
-        clusterphone.sendToMaster("passConnection", { id: req._hotpotato.targetWorker }, socket);
-
-        // Cleanup the socket from our end.
-        socket.emit("close");
+        var target = req._hotpotato.targetWorker;
+        return clusterphone.sendToMaster("passConnection", target, socket).ackd().then(function() {
+          // TODO: is this actually necessary? child_process closes the underlying
+          // handle. Does that result in a close being emitted on the socket itself?
+          // Cleanup the socket from our end.
+          socket.emit("close");
+        });
       }
 
       // We have now finished proxying this request.
@@ -211,7 +217,7 @@ function handlePassingRequest(req, res) {
 // It can also operate in a mode where it passes off the whole connection to 
 // the new worker.
 function pass(passConnection, req, res) {
-  workerDebug("Passing off a request.");
+  debug("Passing off a request.");
 
   var socket = req.connection;
 
@@ -241,27 +247,29 @@ function pass(passConnection, req, res) {
   // where to route this request to.
   req.pause();
 
-  clusterphone.sendToMaster("routeConnection", {
+  var requestData = {
     method: req.method,
     url: req.url,
     headers: req.headers
-  }).then(function(routeReply) {
-    if (routeReply.error) {
+  };
+
+  return clusterphone.sendToMaster("routeRequest", requestData).ackd()
+    .then(function(routeReply) {
+      req._hotpotato.targetWorker = routeReply.id;
+      req._hotpotato.proxyTo = routeReply.path;
+
+      // It's safe to resume the request now.
+      req.resume();
+
+      handlePassingRequest(req, res);
+    })
+    .catch(function(err) {
       // TODO: handle this better.
-      workerDebug("Failed to pass off connection: " + routeReply.error);
+      debug("Failed to pass off connection: " + err.stack);
       res.writeHead(500);
       res.end();
       return;
-    }
-
-    req._hotpotato.targetWorker = routeReply.id;
-    req._hotpotato.proxyTo = routeReply.path;
-
-    // It's safe to resume the request now.
-    req.resume();
-
-    handlePassingRequest(req, res);
-  });
+    });
 }
 
 function setServer(server) {
@@ -297,7 +305,7 @@ function setServer(server) {
 }
 
 function passUpgrade(req, socket, head) {
-  workerDebug("Passing off an upgrade.");
+  debug("Passing off an upgrade.");
 
   if (req._hotpotato) {
     throw new Error("Looks like passUpgrade was called on same request more than once.");
@@ -305,14 +313,16 @@ function passUpgrade(req, socket, head) {
 
   req._hotpotato = {};
 
-  clusterphone.sendToMaster ("passUpgrade", {
+  var requestData = {
     method: req.method,
     url: req.url,
     headers: req.headers,
     httpVersionMinor: req.httpVersionMinor,
     httpVersionMajor: req.httpVersionMajor,
     head: head ? head.toString("base64") : null,
-  }, socket);
+  };
+
+  return clusterphone.sendToMaster ("passUpgrade", requestData, socket).ackd();
 }
 
 exports.passRequest = pass.bind(null, false);
