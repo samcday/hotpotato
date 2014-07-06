@@ -210,6 +210,7 @@ function handlePassingRequest(req, res) {
     // TODO: error handling on pipe.
     proxyResp.pipe(res);
     proxyResp.on("end", function() {
+      debug("Finishing proxying request for routeId " + routeId + " to worker " + targetWorker);
       if (socket._hotpotato.passConnection && !socket._hotpotato.parsing && !socket._hotpotato.pendingReqs.length) {
         if (!socket._handle) {
           // Most likely the connection was closed. That's okay.
@@ -217,7 +218,8 @@ function handlePassingRequest(req, res) {
           return;
         }
 
-        debug("Passing off a connection.");
+        debug("Passing off connection for routeId " + routeId);
+
         // The connection needs to be passed to the new worker, *and* this is 
         // a good time to do it. So let's do it.
         var passRequest = {
@@ -282,6 +284,7 @@ function pass(passConnection, req, res) {
     socket._hotpotato.parsing = false;
 
     socket.on("__hotpotato-request", function(req, res) {
+      debug("Queueing up another request on connection with routeId " + req.socket._hotpotato.routeId);
       socket._hotpotato.parsing = false;
       socket._hotpotato.pendingReqs.push([req, res]);
     });
@@ -302,6 +305,10 @@ function pass(passConnection, req, res) {
       req._hotpotato.routeId = routeReply.routeId;
       req._hotpotato.targetWorker = routeReply.workerId;
       req._hotpotato.proxyTo = routeReply.connection;
+
+      if (passConnection) {
+        socket._hotpotato.routeId = routeReply.routeId;
+      }
 
       // It's safe to resume the request now.
       req.resume();

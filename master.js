@@ -29,6 +29,9 @@ function initWorker(worker) {
 
   return clusterphone.sendTo(worker, "init").ackd().then(function(address) {
     serverDeferred.resolve(address);
+  }).catch(function() {
+    // TODO: worker is toast. What to do here?
+    console.log("WARN: hotpotato couldn't init worker " + worker.id);
   });
 }
 
@@ -52,10 +55,8 @@ function runRouter(method, url, headers) {
   });
 }
 
-var routeId = 0;
+var routeId = 1;
 clusterphone.handlers.routeRequest = function(worker, requestData) {
-  debug("Routing request.");
-
   var method  = requestData.method,
       url     = requestData.url,
       headers = requestData.headers;
@@ -65,11 +66,14 @@ clusterphone.handlers.routeRequest = function(worker, requestData) {
       throw new Error("No worker found.");
     }
 
+    var newRouteId = routeId++;
+    debug("Created new routeId " + newRouteId, method, url, headers);
+
     return serverMap[worker.id].then(function(connectionDetails) {
       return {
         workerId: worker.id,
         connection: connectionDetails,
-        routeId: routeId++
+        routeId: newRouteId
       };
     });
   });
@@ -79,7 +83,7 @@ clusterphone.handlers.passConnection = function(worker, request, connection) {
   var destWorkerId = request.workerId,
       routeId = request.routeId;
 
-  debug("Passing connection for routeId " + routeId + " off to new destination.");
+  debug("Passing connection for routeId " + routeId + " off to worker " + destWorkerId);
 
   if (!connection) {
     debug("WEIRDNESS: asked to pass off a nonexistent connection for routeId " + routeId + ". FIXME.");

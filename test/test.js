@@ -3,7 +3,13 @@
 var Promise = require("bluebird"),
     cluster = require("cluster"),
     net     = require("net"),
+    http    = require("http"),
     hotpotato = require("../hotpotato");
+
+var foreverAgent = require("yakaa")({
+  keepAlive: true,
+  keepAliveTimeoutMsecs: 30000
+});
 
 // TODO: test larger chunked bodies are correctly handled.
 // TODO: test passing to a nonexistent worker.
@@ -16,6 +22,19 @@ var Promise = require("bluebird"),
 
 var expect = require("chai").expect;
 var common = require("./common");
+
+function readResponse(response) {
+  return new Promise(function(resolve) {
+    var data = "";
+    response.setEncoding("utf8");
+    response.on("data", function(chunk) {
+      data += chunk;
+    });
+    response.on("end", function() {
+      resolve(data);
+    });
+  });
+}
 
 describe("hotpotato", function() {
   before(function() {
@@ -57,6 +76,51 @@ describe("hotpotato", function() {
           expect(routerCalled, "Router called").to.be.true;
         });
     })]);
+  });
+
+  // TODO: midnight coding resulted in this madness. Please clean me up.
+  it("passes connections between workers correctly", function(done) {
+    hotpotato.router = function() {
+      return new Promise(function(resolve) {
+        var secondWorker = cluster.fork({BEHAVIOR: "listen-echo"});
+        secondWorker.on("listening", function() {
+          resolve(secondWorker.id);
+        });
+      });
+    };
+
+    var firstWorker = cluster.fork({BEHAVIOR: "listen-pass"});
+    firstWorker.on("listening", function(address) {
+      var request = http.get({
+        agent: foreverAgent,
+        port: address.port,
+        path: "/passall"
+      });
+
+      var reqSocket;
+      request.on("socket", function() {
+        reqSocket = request.connection;
+      });
+
+      request.on("response", function(resp) {
+        readResponse(resp).then(function(firstReply) {
+          var req2 = http.get({
+            agent: foreverAgent,
+            port: address.port,
+            path: "/again"
+          });
+          req2.on("socket", function() {
+            expect(req2.connection).to.eql(reqSocket);
+          });
+          req2.on("response", function(resp2) {
+            readResponse(resp2).then(function(reply2) {
+              expect(reply2).to.eql(firstReply);
+              done();
+            });
+          });
+        });
+      });
+    });
   });
 
   it ("works correctly", function() {
@@ -166,6 +230,8 @@ describe("hotpotato", function() {
     });
   });
 
+  // TODO: Uh. This is working, but the debug logs for it look pretty suspicious.
+  // Why is routeid null?
   it("handles connection handoffs from pipelined requests correctly", function() {
     var worker = common.spawnNotifierWorker();
 
@@ -212,9 +278,5 @@ describe("hotpotato", function() {
 
       return deferred.promise;
     });
-  });
-
-  it("won't pass off a connection if it closes after request", function() {
-    // TODO:
   });
 });
