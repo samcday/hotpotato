@@ -90,7 +90,7 @@ clusterphone.handlers.passConnection = function(worker, destWorkerId, connection
     debug("Tried to pass a connection off to a nonexistent worker.");
 
     // TODO: handle this better? Form a basic 503 response?
-    connection.destroy();
+    return connection.destroy();
   }
 
   return clusterphone.sendTo(destWorker, "connection", {}, connection).ackd();

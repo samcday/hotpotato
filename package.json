@@ -26,7 +26,8 @@
     "clusterphone": "^0.1.0-6",
     "debug": "^1.0.2",
     "shimmer": "^1.0.0",
-    "temp": "^0.8.0"
+    "temp": "^0.8.0",
+    "yakaa": "^1.0.0"
   },
   "devDependencies": {
     "chai": "^1.9.1",

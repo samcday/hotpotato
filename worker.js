@@ -6,18 +6,30 @@ var Promise = require("bluebird"),
     cluster = require("cluster"),
     debug   = require("debug"),
     shimmer = require("shimmer"),
+    Agent   = require("yakaa"),
     debug   = debug("hotpotato:worker" + cluster.worker.id),
     clusterphone = require("clusterphone").ns("hotpotato");
 
 var HTTPParser = process.binding('http_parser').HTTPParser;
 
-// TODO: use a separate agent for all proxy requests.
 // TODO: clean up socket state on finished pass.
 // TODO: figure out how we handle failed passes gracefully.
 
 // This will run a http.Server listening on the separate socket the master
 // directs us to.
 var sideChannelServer;
+
+// This is the http.Agent we use when talking to intra-cluster workers.
+// It pools connections and keeps them alive for a configrable timeout.
+// This is preferable over Node.js default Agent, which *does* use keep-alive,
+// but will close a socket if there's no requests queued up to use it.
+// The max-sockets here is on a per host basis.
+var workerAgent = new Agent({
+    maxSockets: 5,
+    maxFreeSockets: 5,
+    keepAlive: true,
+    keepAliveTimeoutMsecs: 10000
+});
 
 // This is the actual server that is handling requests in caller. We pump
 // sidechanneled requests into this. We also attach the transferred connection
@@ -30,7 +42,8 @@ function setupSideChannelServer(socketPath) {
   var deferred = Promise.defer();
 
   // TODO: This is some epic fucking hax. But I couldn't figure out how else
-  // to create a Server that doesn't get shared with master.
+  // to create a Server that doesn't get shared with master. What I want here
+  // is to listen on a socket that ONLY this worker listens on.
   sideChannelServer = http.createServer();
   var handle = net._createServerHandle(socketPath, -1, -1, undefined);
   sideChannelServer._listen2(null, null, null, -1, handle.fd);
@@ -53,8 +66,11 @@ function setupSideChannelServer(socketPath) {
     // TODO: I think this is safe - keep-alive on the internal side-channel
     // connections should be fine. Without this, pipelined requests from the
     // remote client will break.
-    var shouldKeepAlive = req.headers["x-hotpotato-keepalive"] === "true";
-    res.shouldKeepAlive = shouldKeepAlive;
+    // var shouldKeepAlive = req.headers["x-hotpotato-keepalive"] === "true";
+    // res.shouldKeepAlive = shouldKeepAlive;
+
+    // TODO: we should handle this on the proxying side, not here.
+    res.shouldKeepAlive = true;
     targetServer.emit("request", req, res);
   });
 
@@ -143,6 +159,7 @@ function handlePassingRequest(req, res) {
 
   // Open a connection to the target and proxy the inbound request to it.
   var proxyReq = http.request({
+    agent: workerAgent,
     socketPath: req._hotpotato.proxyTo,
     path: req.url,
     method: req.method,
