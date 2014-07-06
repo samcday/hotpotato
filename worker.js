@@ -1,7 +1,6 @@
 "use strict";
 
 var Promise = require("bluebird"),
-    net     = require("net"),
     http    = require("http"),
     cluster = require("cluster"),
     debug   = require("debug"),
@@ -25,8 +24,8 @@ var sideChannelServer;
 // but will close a socket if there's no requests queued up to use it.
 // The max-sockets here is on a per host basis.
 var workerAgent = new Agent({
-    maxSockets: 5,
-    maxFreeSockets: 5,
+    maxSockets: 10,
+    maxFreeSockets: 10,
     keepAlive: true,
     keepAliveTimeoutMsecs: 10000
 });
@@ -36,17 +35,13 @@ var workerAgent = new Agent({
 // to this server.
 var targetServer;
 
-function setupSideChannelServer(socketPath) {
+function setupSideChannelServer() {
   debug("Creating side-channel server");
 
-  var deferred = Promise.defer();
-
-  // TODO: This is some epic fucking hax. But I couldn't figure out how else
-  // to create a Server that doesn't get shared with master. What I want here
-  // is to listen on a socket that ONLY this worker listens on.
   sideChannelServer = http.createServer();
-  var handle = net._createServerHandle(socketPath, -1, -1, undefined);
-  sideChannelServer._listen2(null, null, null, -1, handle.fd);
+  // Regular listen() call results in net module asking cluster to step in and
+  // get the master to create server FD for us. Which we don't want.
+  sideChannelServer._listen2("127.0.0.1", 0, null, -1);
 
   sideChannelServer.on("connection", function(connection) {
     connection._hotpotato = {
@@ -55,8 +50,10 @@ function setupSideChannelServer(socketPath) {
   });
 
   sideChannelServer.on("request", function(req, res) {
+    var routeId = req.headers["x-hotpotato-routeid"];
+
     if (!targetServer) {
-      debug("Side channel request received, but no dest server to forward to.");
+      debug("Side channel request for " + routeId + " received, but no dest server to forward to.");
       // TODO: properly handle this.
       req.abort();
       res.writeHead(500);
@@ -71,25 +68,39 @@ function setupSideChannelServer(socketPath) {
 
     // TODO: we should handle this on the proxying side, not here.
     res.shouldKeepAlive = true;
+
+    debug("Side channel got request for routeId " + routeId);
     targetServer.emit("request", req, res);
   });
 
-  sideChannelServer.on("listening", deferred.callback);
-
-  return deferred.promise;
+  return new Promise(function(resolve) {
+    sideChannelServer.on("listening", function() {
+      var address = sideChannelServer.address();
+      var connectionDetails = {
+        host: address.address,
+        port: address.port
+      };
+      resolve(connectionDetails);
+    });
+  });
 }
 
-clusterphone.handlers.createServer = function(path) {
-  return setupSideChannelServer(path);
+clusterphone.handlers.init = function() {
+  return setupSideChannelServer();
 };
 
-clusterphone.handlers.connection = function(_, socket) {
-  debug("Got a new connection passed to me.");
+clusterphone.handlers.connection = function(routeId, socket) {
+  debug("Connection for routeId " + routeId + " passed to me.");
 
   if (!targetServer) {
     // TODO: handle me.
-    debug("Ouch. No target server for a newly handed off connection.");
-    return;
+    debug("Ouch. No target server for connection.");
+    return Promise.resolve();
+  }
+
+  if (!socket) {
+    debug("Connection for routeId " + routeId + " died by the time it made it to us.");
+    return Promise.resolve();
   }
 
   targetServer.emit("connection", socket);
@@ -98,7 +109,7 @@ clusterphone.handlers.connection = function(_, socket) {
 };
 
 clusterphone.handlers.upgrade = function(requestData, socket) {
-  debug("Got a new upgrade passed to me.");
+  debug("Got an upgrade passed to me.");
 
   if (!targetServer) {
     // TODO: handle me.
@@ -152,15 +163,21 @@ function connectionHandler(connection) {
 
 function handlePassingRequest(req, res) {
   var deferred = Promise.defer(),
+      routeId = req._hotpotato.routeId,
+      targetWorker = req._hotpotato.targetWorker,
       socket = req.connection;
 
   req.headers["X-HOTPOTATO-WORKER"] = cluster.worker.id;
+  req.headers["X-HOTPOTATO-ROUTEID"] = routeId;
   req.headers["X-HOTPOTATO-KEEPALIVE"] = res.shouldKeepAlive;
+
+  debug("Proxying request for routeId " + routeId + " to worker " + targetWorker);
 
   // Open a connection to the target and proxy the inbound request to it.
   var proxyReq = http.request({
     agent: workerAgent,
-    socketPath: req._hotpotato.proxyTo,
+    host: req._hotpotato.proxyTo.host,
+    port: req._hotpotato.proxyTo.port,
     path: req.url,
     method: req.method,
     headers: req.headers
@@ -168,9 +185,9 @@ function handlePassingRequest(req, res) {
 
   req.pipe(proxyReq);
 
-  proxyReq.on("error", function() {
+  proxyReq.on("error", function(err) {
     // TODO: cleanup here.
-    debug("Incoming request errored while we were proxying it.");
+    debug("Proxy request for routeId " + routeId + " errored while we were proxying it.", err.stack);
   });
 
   // Once we've finished sending the request over the wire, we might want to
@@ -194,11 +211,21 @@ function handlePassingRequest(req, res) {
     proxyResp.pipe(res);
     proxyResp.on("end", function() {
       if (socket._hotpotato.passConnection && !socket._hotpotato.parsing && !socket._hotpotato.pendingReqs.length) {
+        if (!socket._handle) {
+          // Most likely the connection was closed. That's okay.
+          debug("Connection for routeId " + routeId + " died when we were supposed to pass it.");
+          return;
+        }
+
         debug("Passing off a connection.");
         // The connection needs to be passed to the new worker, *and* this is 
         // a good time to do it. So let's do it.
-        var target = req._hotpotato.targetWorker;
-        return clusterphone.sendToMaster("passConnection", target, socket).ackd().then(function() {
+        var passRequest = {
+          workerId: req._hotpotato.targetWorker,
+          routeId: routeId
+        };
+
+        return clusterphone.sendToMaster("passConnection", passRequest, socket).ackd().then(function() {
           // TODO: is this actually necessary? child_process closes the underlying
           // handle. Does that result in a close being emitted on the socket itself?
           // Cleanup the socket from our end.
@@ -272,8 +299,9 @@ function pass(passConnection, req, res) {
 
   return clusterphone.sendToMaster("routeRequest", requestData).ackd()
     .then(function(routeReply) {
-      req._hotpotato.targetWorker = routeReply.id;
-      req._hotpotato.proxyTo = routeReply.path;
+      req._hotpotato.routeId = routeReply.routeId;
+      req._hotpotato.targetWorker = routeReply.workerId;
+      req._hotpotato.proxyTo = routeReply.connection;
 
       // It's safe to resume the request now.
       req.resume();

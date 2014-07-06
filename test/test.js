@@ -11,12 +11,13 @@ var Promise = require("bluebird"),
 // TODO: test passing a connection to a dying worker.
 // TODO: test passing a request to a worker that is timing out.
 // TODO: test timeouts
+// TODO: test passing a connection that is Connection:close
 // TODO: test websockets
 
 var expect = require("chai").expect;
 var common = require("./common");
 
-describe("Basic handoff", function() {
+describe("hotpotato", function() {
   before(function() {
     cluster.setupMaster({
       exec: __dirname + "/worker-entrypoint.js"
@@ -211,5 +212,9 @@ describe("Basic handoff", function() {
 
       return deferred.promise;
     });
+  });
+
+  it("won't pass off a connection if it closes after request", function() {
+    // TODO:
   });
 });

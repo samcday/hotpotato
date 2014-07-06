@@ -4,8 +4,6 @@ var Promise = require("bluebird"),
     cluster = require("cluster"),
     debug   = require("debug")("hotpotato:master"),
     temp    = require("temp"),
-    path    = require("path"),
-    fs      = Promise.promisifyAll(require("fs")),
     clusterphone = require("clusterphone").ns("hotpotato");
 
 // TODO: handle edge case of router sending request to originating worker.
@@ -15,8 +13,6 @@ temp.track();
 // This will map worker ids to the side-channel servers they are available on.
 var serverMap = {};
 
-var socketDir = temp.mkdirSync();
-
 function cleanupWorker(worker) {
   delete serverMap[worker.id];
 }
@@ -25,19 +21,15 @@ function setupWorker(worker) {
   worker.on("exit", cleanupWorker.bind(null, worker));
 }
 
-function createWorkerServer(worker) {
+function initWorker(worker) {
   // We won't resolve the promise until the worker has responded that they
   // have created the server.
   var serverDeferred = Promise.defer();
   serverMap[worker.id] = serverDeferred.promise;
 
-  var socketFile = path.join(socketDir, "worker-" + worker.id + ".sock");
-
-  fs.unlinkAsync(socketFile).finally(function() {
-    return clusterphone.sendTo(worker, "createServer", socketFile).ackd().then(function() {
-      serverDeferred.resolve(socketFile);
-    });
-  }).catch(function() {});  // Ugly I know, only way I could find to STFU bluebird.
+  return clusterphone.sendTo(worker, "init").ackd().then(function(address) {
+    serverDeferred.resolve(address);
+  });
 }
 
 function runRouter(method, url, headers) {
@@ -60,6 +52,7 @@ function runRouter(method, url, headers) {
   });
 }
 
+var routeId = 0;
 clusterphone.handlers.routeRequest = function(worker, requestData) {
   debug("Routing request.");
 
@@ -72,14 +65,26 @@ clusterphone.handlers.routeRequest = function(worker, requestData) {
       throw new Error("No worker found.");
     }
 
-    return serverMap[worker.id].then(function(path) {
-      return {id: worker.id, path: path};
+    return serverMap[worker.id].then(function(connectionDetails) {
+      return {
+        workerId: worker.id,
+        connection: connectionDetails,
+        routeId: routeId++
+      };
     });
   });
 };
 
-clusterphone.handlers.passConnection = function(worker, destWorkerId, connection) {
-  debug("Passing a connection off.");
+clusterphone.handlers.passConnection = function(worker, request, connection) {
+  var destWorkerId = request.workerId,
+      routeId = request.routeId;
+
+  debug("Passing connection for routeId " + routeId + " off to new destination.");
+
+  if (!connection) {
+    debug("WEIRDNESS: asked to pass off a nonexistent connection for routeId " + routeId + ". FIXME.");
+    return Promise.resolve();
+  }
 
   var destWorker = cluster.workers[destWorkerId];
 
@@ -87,13 +92,15 @@ clusterphone.handlers.passConnection = function(worker, destWorkerId, connection
     // Presumably, the originating worker proxied a request to dest worker
     // that caused it to error and terminate by the time we got around to 
     // sending it the connection.
-    debug("Tried to pass a connection off to a nonexistent worker.");
+    debug("ERROR: Connection pass for routeId " + routeId + " was destined for a nonexistent worker.");
 
     // TODO: handle this better? Form a basic 503 response?
     return connection.destroy();
   }
 
-  return clusterphone.sendTo(destWorker, "connection", {}, connection).ackd();
+  return clusterphone.sendTo(destWorker, "connection", routeId, connection).ackd().catch(function() {
+    debug("Failed to pass off connection to worker.");
+  });
 };
 
 clusterphone.handlers.passUpgrade = function(requestData, socket) {
@@ -114,5 +121,5 @@ clusterphone.handlers.passUpgrade = function(requestData, socket) {
   });
 };
 
-cluster.on("online", createWorkerServer);
+cluster.on("online", initWorker);
 cluster.on("fork", setupWorker);
