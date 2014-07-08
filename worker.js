@@ -13,6 +13,7 @@ var HTTPParser = process.binding('http_parser').HTTPParser;
 
 // TODO: clean up socket state on finished pass.
 // TODO: figure out how we handle failed passes gracefully.
+// TODO: intra-cluster agent pool size needs to be tunable.
 
 // This will run a http.Server listening on the separate socket the master
 // directs us to.
@@ -24,8 +25,8 @@ var sideChannelServer;
 // but will close a socket if there's no requests queued up to use it.
 // The max-sockets here is on a per host basis.
 var workerAgent = new Agent({
-    maxSockets: 100,
-    maxFreeSockets: 100,
+    maxSockets: 20,
+    maxFreeSockets: 20,
     keepAlive: true,
     keepAliveTimeoutMsecs: 10000
 });
@@ -90,37 +91,31 @@ clusterphone.handlers.init = function() {
 };
 
 clusterphone.handlers.connection = function(connectionData, socket) {
-  try {
-    var routeId = connectionData.routeId;
+  var routeId = connectionData.routeId;
 
-    if (!targetServer) {
-      // TODO: handle me.
-      debug("Ouch. No target server for connection.");
-      return Promise.resolve();
-    }
-
-    if (!socket) {
-      debug("Connection for routeId " + routeId + " died by the time it made it to us.");
-      return Promise.resolve();
-    }
-
-    debug("Connection " + socket.remoteAddress + ":" + socket.remotePort + " for routeId " + routeId + " passed to me.");
-
-    targetServer.emit("connection", socket);
-
-    connectionData.buffered.forEach(function(buffer) {
-      buffer = new Buffer(buffer, "base64");
-      console.log(socket.remoteAddress + ":" + socket.remotePort, "data", buffer.toString("utf8"));
-      socket.ondata(buffer, 0, buffer.length);
-    });
-
+  if (!targetServer) {
+    // TODO: handle me.
+    debug("Ouch. No target server for connection.");
     return Promise.resolve();
   }
-  catch(e) {
-    console.log("OHSNAP.");
-    console.log(e);
-    console.log(e.stack);
+
+  if (!socket) {
+    debug("Connection for routeId " + routeId + " died by the time it made it to us.");
+    return Promise.resolve();
   }
+
+  debug("Connection " + socket.remoteAddress + ":" + socket.remotePort + " for routeId " + routeId + " passed to me.");
+
+  targetServer.emit("connection", socket);
+
+  // Replay all the data we couldn't avoid reading from other worker during
+  // handoff phase.
+  connectionData.buffered.forEach(function(buffer) {
+    buffer = new Buffer(buffer, "base64");
+    socket.ondata(buffer, 0, buffer.length);
+  });
+
+  return Promise.resolve();
 };
 
 clusterphone.handlers.upgrade = function(requestData, socket) {
@@ -210,23 +205,27 @@ function handlePassingRequest(req, res) {
   // pause the connection in preparation for a handover.
   req.on("end", function() {
     if (socket._hotpotato.passConnection && !socket._hotpotato.parsing && !socket._hotpotato.pendingReqs.length) {
+      debug("Pausing socket " +  socketAddress + " request for routeId " + routeId);
+
       // Okay. We finished proxying this request, and we're not already parsing
       // another. Pause the connection so that we don't pull anything else 
       // off it.
-      debug("Pausing socket " +  socketAddress + " request for routeId " + routeId);
-
-      var buffered = socket._hotpotato.buffered = [];
-
       socket.pause();
 
-      if (socket._handle) {
-        socket._handle.onread = function(buf, start, end) {
-          if(!buf) {
-            // console.log("WTF?!", arguments, new Error().stack);
-            return;
-          }
-          buffered.push(buf.slice(start, start+end).toString("base64"));
-        };
+      // ... that's the plan anyway. Problem is, Node Sockets are like ... 
+      // leaky faucets. You can tighten the handle as much as you like, a bit
+      // is still gonna come out.
+      // What we have to do is stomp on the socket.ondata, and make sure we
+      // drop in a socket.push that returns FALSE. The underlying TCP handle
+      // wrapper will call it very soon if there's data, and we'll buffer
+      // what it gives us to hand to a worker.
+      var buffered = socket._hotpotato.buffered = [];
+      socket.ondata = null;
+      socket.push = function(buffer) {
+        if (buffer) {
+          buffered.push(buffer.toString("base64"));
+        }
+        return false;
       }
     }
   });
@@ -352,7 +351,7 @@ function pass(passConnection, req, res) {
     })
     .catch(function(err) {
       // TODO: handle this better.
-      debug("Failed to pass off connection: " + err.stack);
+      debug("Failed to pass off connection: " + err.origStack);
       res.writeHead(500);
       res.end();
       return;

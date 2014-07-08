@@ -13,6 +13,10 @@ var foreverAgent = require("yakaa")({
 
 // TODO: test larger chunked bodies are correctly handled.
 // TODO: test passing to a nonexistent worker.
+// TODO: test passing a connection that dies during initial reqest
+// TODO: test passing a connection that dies during proxying
+// TODO: test passing a connection that dies after proxying but before passing
+// TODO: test passing a connection that dies after being passed
 // TODO: test passing a request to a dying worker.
 // TODO: test passing a connection to a dying worker.
 // TODO: test passing a request to a worker that is timing out.
@@ -94,7 +98,7 @@ describe("hotpotato", function() {
       var request = http.get({
         agent: foreverAgent,
         port: address.port,
-        path: "/passall"
+        path: "/passconn"
       });
 
       var reqSocket;
@@ -172,7 +176,7 @@ describe("hotpotato", function() {
 
     return common.spawnListenPasser(function(listenWorker, req) {
       return Promise.all([
-        req("GET", "/foo/passall").then(function(response) {
+        req("GET", "/foo/passconn").then(function(response) {
           expect(response.text).to.eql("worker" + worker.id);
         }),
         req("GET", "/foo/arbitrary").then(function(response) {
@@ -246,7 +250,7 @@ describe("hotpotato", function() {
       var deferred = Promise.defer();
       var conn = net.createConnection(req.port);
 
-      conn.write("GET /passall HTTP/1.1\r\n\r\n");
+      conn.write("GET /passconn HTTP/1.1\r\n\r\n");
       conn.write("GET /foo HTTP/1.1\r\n\r\n");
 
       var parser = new HTTPParser(HTTPParser.RESPONSE);

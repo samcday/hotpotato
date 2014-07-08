@@ -3,12 +3,10 @@
 var Promise = require("bluebird"),
     cluster = require("cluster"),
     debug   = require("debug")("hotpotato:master"),
-    temp    = require("temp"),
     clusterphone = require("clusterphone").ns("hotpotato");
 
+// TODO: handle no router.
 // TODO: handle edge case of router sending request to originating worker.
-
-temp.track();
 
 // This will map worker ids to the side-channel servers they are available on.
 var serverMap = {};

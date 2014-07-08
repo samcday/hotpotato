@@ -7,10 +7,12 @@ var cluster = require("cluster");
 hotpotato.server(server);
 
 server.on("request", function(req, res) {
+  req.headers["x-from"] = cluster.worker.id;
+
   if (/passme$/.test(req.url)) {
     return hotpotato.passRequest(req, res);
   }
-  else if (/passall$/.test(req.url)) {
+  else if (/passconn$/.test(req.url)) {
     return hotpotato.passConnection(req, res);
   }
   res.writeHead(200);
