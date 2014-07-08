@@ -83,12 +83,15 @@ clusterphone.handlers.passConnection = function(worker, request, connection) {
   var destWorkerId = request.workerId,
       routeId = request.routeId;
 
+
   debug("Passing connection for routeId " + routeId + " off to worker " + destWorkerId);
 
   if (!connection) {
     debug("WEIRDNESS: asked to pass off a nonexistent connection for routeId " + routeId + ". FIXME.");
     return Promise.resolve();
   }
+
+  connection._handle.readStop();
 
   var destWorker = cluster.workers[destWorkerId];
 
@@ -99,10 +102,16 @@ clusterphone.handlers.passConnection = function(worker, request, connection) {
     debug("ERROR: Connection pass for routeId " + routeId + " was destined for a nonexistent worker.");
 
     // TODO: handle this better? Form a basic 503 response?
-    return connection.destroy();
+    connection.destroy();
+    return Promise.resolve();
   }
 
-  return clusterphone.sendTo(destWorker, "connection", routeId, connection).ackd().catch(function() {
+  var connectionData = {
+    routeId: routeId,
+    buffered: request.buffered
+  };
+
+  return clusterphone.sendTo(destWorker, "connection", connectionData, connection).ackd().catch(function() {
     debug("Failed to pass off connection to worker.");
   });
 };

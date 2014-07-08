@@ -24,8 +24,8 @@ var sideChannelServer;
 // but will close a socket if there's no requests queued up to use it.
 // The max-sockets here is on a per host basis.
 var workerAgent = new Agent({
-    maxSockets: 10,
-    maxFreeSockets: 10,
+    maxSockets: 100,
+    maxFreeSockets: 100,
     keepAlive: true,
     keepAliveTimeoutMsecs: 10000
 });
@@ -89,23 +89,38 @@ clusterphone.handlers.init = function() {
   return setupSideChannelServer();
 };
 
-clusterphone.handlers.connection = function(routeId, socket) {
-  debug("Connection for routeId " + routeId + " passed to me.");
+clusterphone.handlers.connection = function(connectionData, socket) {
+  try {
+    var routeId = connectionData.routeId;
 
-  if (!targetServer) {
-    // TODO: handle me.
-    debug("Ouch. No target server for connection.");
+    if (!targetServer) {
+      // TODO: handle me.
+      debug("Ouch. No target server for connection.");
+      return Promise.resolve();
+    }
+
+    if (!socket) {
+      debug("Connection for routeId " + routeId + " died by the time it made it to us.");
+      return Promise.resolve();
+    }
+
+    debug("Connection " + socket.remoteAddress + ":" + socket.remotePort + " for routeId " + routeId + " passed to me.");
+
+    targetServer.emit("connection", socket);
+
+    connectionData.buffered.forEach(function(buffer) {
+      buffer = new Buffer(buffer, "base64");
+      console.log(socket.remoteAddress + ":" + socket.remotePort, "data", buffer.toString("utf8"));
+      socket.ondata(buffer, 0, buffer.length);
+    });
+
     return Promise.resolve();
   }
-
-  if (!socket) {
-    debug("Connection for routeId " + routeId + " died by the time it made it to us.");
-    return Promise.resolve();
+  catch(e) {
+    console.log("OHSNAP.");
+    console.log(e);
+    console.log(e.stack);
   }
-
-  targetServer.emit("connection", socket);
-
-  return Promise.resolve();
 };
 
 clusterphone.handlers.upgrade = function(requestData, socket) {
@@ -165,13 +180,14 @@ function handlePassingRequest(req, res) {
   var deferred = Promise.defer(),
       routeId = req._hotpotato.routeId,
       targetWorker = req._hotpotato.targetWorker,
-      socket = req.connection;
+      socket = req.connection,
+      socketAddress = socket.remoteAddress + ":" + socket.remotePort;
 
   req.headers["X-HOTPOTATO-WORKER"] = cluster.worker.id;
   req.headers["X-HOTPOTATO-ROUTEID"] = routeId;
   req.headers["X-HOTPOTATO-KEEPALIVE"] = res.shouldKeepAlive;
 
-  debug("Proxying request for routeId " + routeId + " to worker " + targetWorker);
+  debug("Proxying request for routeId " + routeId + " from " + socketAddress + " to worker " + targetWorker);
 
   // Open a connection to the target and proxy the inbound request to it.
   var proxyReq = http.request({
@@ -197,8 +213,21 @@ function handlePassingRequest(req, res) {
       // Okay. We finished proxying this request, and we're not already parsing
       // another. Pause the connection so that we don't pull anything else 
       // off it.
-      req.pause();
-      socket.parser.pause();
+      debug("Pausing socket " +  socketAddress + " request for routeId " + routeId);
+
+      var buffered = socket._hotpotato.buffered = [];
+
+      socket.pause();
+
+      if (socket._handle) {
+        socket._handle.onread = function(buf, start, end) {
+          if(!buf) {
+            // console.log("WTF?!", arguments, new Error().stack);
+            return;
+          }
+          buffered.push(buf.slice(start, start+end).toString("base64"));
+        };
+      }
     }
   });
 
@@ -212,6 +241,7 @@ function handlePassingRequest(req, res) {
     proxyResp.on("end", function() {
       debug("Finishing proxying request for routeId " + routeId + " to worker " + targetWorker);
       if (socket._hotpotato.passConnection && !socket._hotpotato.parsing && !socket._hotpotato.pendingReqs.length) {
+        // TODO: is this test necessary?
         if (!socket._handle) {
           // Most likely the connection was closed. That's okay.
           debug("Connection for routeId " + routeId + " died when we were supposed to pass it.");
@@ -220,19 +250,24 @@ function handlePassingRequest(req, res) {
 
         debug("Passing off connection for routeId " + routeId);
 
-        // The connection needs to be passed to the new worker, *and* this is 
-        // a good time to do it. So let's do it.
-        var passRequest = {
-          workerId: req._hotpotato.targetWorker,
-          routeId: routeId
-        };
+        setTimeout(function() {
+          // The connection needs to be passed to the new worker, *and* this is 
+          // a good time to do it. So let's do it.
+          var passRequest = {
+            workerId: req._hotpotato.targetWorker,
+            routeId: routeId,
+            buffered: socket._hotpotato.buffered
+          };
 
-        return clusterphone.sendToMaster("passConnection", passRequest, socket).ackd().then(function() {
-          // TODO: is this actually necessary? child_process closes the underlying
-          // handle. Does that result in a close being emitted on the socket itself?
-          // Cleanup the socket from our end.
-          socket.emit("close");
-        });
+          return clusterphone.sendToMaster("passConnection", passRequest, socket).ackd().then(function() {
+            // TODO: is this actually necessary? child_process closes the underlying
+            // handle. Does that result in a close being emitted on the socket itself?
+            // Cleanup the socket from our end.
+            // socket.emit("close");
+          });
+        }, 100);
+
+        return;
       }
 
       // We have now finished proxying this request.
