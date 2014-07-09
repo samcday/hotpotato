@@ -23,7 +23,7 @@
   "homepage": "https://github.com/samcday/hotpotato",
   "dependencies": {
     "bluebird": "^2.1.3",
-    "clusterphone": "^0.1.0-7",
+    "clusterphone": "^0.1.0-8",
     "debug": "^1.0.2",
     "shimmer": "^1.0.0",
     "yakaa": "^1.0.0"
