@@ -86,14 +86,14 @@ describe("hotpotato", function() {
   it("passes connections between workers correctly", function(done) {
     hotpotato.router = function() {
       return new Promise(function(resolve) {
-        var secondWorker = cluster.fork({BEHAVIOR: "listen-echo"});
+        var secondWorker = cluster.fork({BEHAVIOR: "echo", LISTEN: 1});
         secondWorker.on("listening", function() {
           resolve(secondWorker.id);
         });
       });
     };
 
-    var firstWorker = cluster.fork({BEHAVIOR: "listen-pass"});
+    var firstWorker = cluster.fork({BEHAVIOR: "pass", LISTEN: 1});
     firstWorker.on("listening", function(address) {
       var request = http.get({
         agent: foreverAgent,
