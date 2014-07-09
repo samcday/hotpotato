@@ -8,11 +8,10 @@ var hotpotato = require("../hotpotato"),
     cluster = require("cluster"),
     url = require("url");
 
-
+var bouncer = hotpotato("example");
 
 if (cluster.isMaster) {
-  hotpotato.router = function(method, reqUrl, headers) {
-    var workerIds = Object.keys(cluster.workers);
+  bouncer.router = function(method, reqUrl) {
     reqUrl = url.parse(reqUrl, true);
     return reqUrl.query.worker;
   };

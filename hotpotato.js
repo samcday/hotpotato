@@ -8,8 +8,10 @@
 
 var cluster = require("cluster");
 
-if (cluster.isMaster) {
-  module.exports = require("./master");
-} else {
-  module.exports = require("./worker");
-}
+module.exports = function(id) {
+  if (cluster.isMaster) {
+    return require("./master")(id);
+  } else {
+    return require("./worker")(id);
+  }
+};

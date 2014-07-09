@@ -6,8 +6,44 @@ var Promise = require("bluebird"),
     debug   = require("debug"),
     shimmer = require("shimmer"),
     Agent   = require("yakaa"),
-    debug   = debug("hotpotato:worker" + cluster.worker.id),
-    clusterphone = require("clusterphone").ns("hotpotato");
+    debug   = debug("hotpotato:worker" + cluster.worker.id);
+
+module.exports = function(id) {
+  var api = {},
+      clusterphone = require("clusterphone").ns("hotpotato:" + id);
+
+  var targetServer,
+      handoffs;
+
+  api.bindTo = function(server) {
+    if (!server) {
+      throw new Error("A server was already set.");
+    }
+    handoffs = require("./handoffs").map(function(Handoff) {
+      return new Handoff(server);
+    });
+    targetServer = server;
+  };
+
+  api.pass = function(req, res) {
+    if (!targetServer) {
+      throw new Error("No server has been setup.");
+    }
+
+    var handoff;
+    handoffs.some(function(possibleHandoff) {
+      if (possibleHandoff.supports(req, res)) {
+        handoff = possibleHandoff;
+        return true;
+      }
+    });
+
+    handoff.handle(req, res);
+  };
+
+  return api;
+};
+
 
 var HTTPParser = process.binding('http_parser').HTTPParser;
 
