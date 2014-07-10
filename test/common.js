@@ -1,7 +1,43 @@
+"use strict";
+
 var Promise = require("bluebird"),
     cluster = require("cluster"),
     http    = require("http"),
     shimmer = require("shimmer");
+
+exports.spawn = function(type, listen) {
+  var env = {BEHAVIOR: type};
+  if (listen) {
+    env.LISTEN = true;
+  }
+
+  var worker = cluster.fork(env);
+
+  worker.on("listening", function(address) {
+    worker.port = address.port;
+  });
+
+  return worker;
+};
+
+exports.requestToWorker = function(worker, opts) {
+  var deferred = Promise.defer();
+  var go = function() {
+    opts.port = worker.port;
+    var req = http.request(opts);
+    deferred.resolve(req);
+  };
+
+  if (worker.port) {
+    go();
+  } else {
+    worker.on("listening", function() {
+      go();
+    });
+  }
+
+  return deferred.promise;
+}
 
 exports.spawnNotifierWorker = function(notify) {
   var worker = cluster.fork({BEHAVIOR: "notify-received"});
