@@ -8,6 +8,9 @@ var Promise = require("bluebird"),
 
 var expect = require("chai").expect;
 
+// TODO: test to ensure that more slow connections than available internal
+// request threads does not block.
+
 var bouncer = hotpotato("test", {
   strategies: ["proxying"]
 });
@@ -167,6 +170,28 @@ describe("hotpotato proxy strategy", function() {
       })
       .spread(function(response, result) {
         expect(result.me).to.eql(self.listenPass.id);
+      });
+  });
+
+  it.only("handles slow inbound requests correctly", function() {
+    var self = this;
+
+    bouncer.router(function() {
+      return self.echo.id;
+    });
+
+    return common.requestToWorker(this.listenPass, { method: "POST", path: "/passme", agent: keepaliveAgent })
+      .then(function(req) {
+        req.write("Hello, ");
+        return Promise.delay(1000).then(function() {
+          req.write("world!");
+          req.end();
+          return common.readFullyJSON(req);
+        });
+      })
+      .spread(function(response, result) {
+        expect(result.me).to.eql(self.echo.id);
+        expect(result.body).to.eql("Hello, world!");
       });
   });
 });

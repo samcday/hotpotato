@@ -130,6 +130,12 @@ function ProxyingWorker(state) {
       };
 
       var finishReq = http.request(reqOpts);
+
+      bufferedData.forEach(function(buf) {
+        finishReq.write(buf);
+      });
+      bufferedData = [];
+
       if (data) {
         finishReq.write(data);
       }
@@ -175,6 +181,11 @@ function ProxyingWorker(state) {
 
       activeProxyReq = http.request(reqOpts);
 
+      bufferedData.forEach(function(buf) {
+        activeProxyReq.write(buf);
+      });
+      bufferedData = [];
+
       activeProxyReq.on("response", function(response) {
         // Don't care about response from remote.
         response.resume();
@@ -194,6 +205,7 @@ function ProxyingWorker(state) {
       });
 
       proxyReqTimeout = setTimeout(function() {
+        debug("Timing out proxyId " + proxyId + " request due to inactivity.");
         activeProxyReq.end();
         awaitingResponse = true;
         activeProxyReq = null;
@@ -421,12 +433,12 @@ function ProxyingWorker(state) {
 
   var handleContinuedProxyRequest = function(req, res) {
     var proxyId = req.headers["x-hotpotato-proxy-id"],
-        underlyingReq = proxyInbounds[proxyId];
+        underlyingReq = proxyInbounds[proxyId].req;
 
     debug("Got data from proxied request for proxyId " + proxyId);
 
     req.on("data", function(data) {
-      newReq.write(data);
+      underlyingReq.write(data);
     });
 
     req.on("end", function() {

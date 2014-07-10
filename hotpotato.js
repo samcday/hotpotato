@@ -5,6 +5,7 @@
 // TODO: default router.
 // TODO: don't allow requests to be passed if data has already been read from them.
 // TODO: handle upgrades.
+// TODO: propagate errors on passing to the request (so server picks up clientErrors).
 
 var Promise = require("bluebird"),
     cluster = require("cluster"),
