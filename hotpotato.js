@@ -9,11 +9,13 @@
 
 var Promise = require("bluebird"),
     cluster = require("cluster"),
+    http    = require("http"),
     _debug  = require("debug");
 
 function initMaster(opts, state) {
   var api = {},
-      debug = _debug(state.debugName("core"));
+      debug = _debug(state.debugName("core")),
+      clusterphone = state.clusterphone;
 
   state.routerFn = function() {
     throw new Error("Master needs a routing function set for Hotpotato to work correctly.");
@@ -44,7 +46,7 @@ function initMaster(opts, state) {
   };
 
   var handoffId = 1;
-  state.clusterphone.handlers.routeRequest = function(worker, data) {
+  clusterphone.handlers.routeRequest = function(worker, data) {
     var method    = data.method,
         url       = data.url,
         headers   = data.headers,
@@ -69,6 +71,31 @@ function initMaster(opts, state) {
       }
 
       return routeResponse;
+    });
+  };
+
+  clusterphone.handlers.routeUpgrade = function(worker, data, socket) {
+    // !!! Make sure socket doesn't leak !!!
+    socket._handle.readStop();
+
+    var method    = data.method,
+        url       = data.url,
+        headers   = data.headers;
+
+    return runRouter(method, url, headers).then(function(worker) {
+      if (!worker) {
+        throw new Error("No worker found.");
+      }
+
+      var newHandoffId = handoffId++;
+      debug("New handoffId " + newHandoffId + " for upgrade.", method, url, headers);
+
+      var upgradeHandoff = {
+        handoffId: newHandoffId,
+        data: data
+      };
+
+      return clusterphone.sendTo(worker, "handleUpgrade", upgradeHandoff, socket, true);
     });
   };
 
@@ -159,12 +186,60 @@ function initWorker(opts, state) {
     pass(true, req, res);
   };
 
+  api.passUpgrade = function(req, socket, buf) {
+    // !!! Make sure socket doesn't leak !!!
+    socket.pause();
+    var buffered = [buf.toString("base64")];
+    socket.push = function(buffer) {
+      if (buffer) {
+        buffered.push(buffer.toString("base64"));
+      }
+      return false;
+    };
+
+    var reqData = {
+      method: req.method,
+      url: req.url,
+      headers: req.headers,
+      buffered: buffered
+    };
+
+    return new Promise(function(resolve) {
+      process.nextTick(function() {
+        // Bundle everything up, send it to master to be re-routed.
+        resolve(clusterphone.sendToMaster("routeUpgrade", reqData, socket).ackd());
+      });
+    });
+  };
+
+  clusterphone.handlers.handleUpgrade = function(upgradeHandoff, socket) {
+    // Reconstruct request.
+    var newReq = new http.IncomingMessage(socket);
+    newReq.url = upgradeHandoff.data.url;
+    newReq.method = upgradeHandoff.data.method;
+    newReq.headers = upgradeHandoff.data.headers;
+
+    // TODO: HTTP version on req.
+
+    var buffers = upgradeHandoff.data.buffered.map(function(data) {
+      return new Buffer(data, "base64");
+    });
+
+    state.targetServer.emit("upgrade", newReq, socket, Buffer.concat(buffers));
+  };
+
   return api;
 }
+
+var instances = {};
 
 module.exports = function(id, opts) {
   if (!id) {
     throw new Error("Hotpotato requires an ID to setup correctly.");
+  }
+
+  if (instances[id]) {
+    return instances[id];
   }
 
   var myName = cluster.isMaster ? "master" : ("worker" + cluster.worker.id);
@@ -195,5 +270,6 @@ module.exports = function(id, opts) {
     state.handoffs[strategy] = new handoffStrategies[strategy](state);
   });
 
-  return cluster.isMaster ? initMaster(opts, state) : initWorker(opts, state);
+  instances[id] = cluster.isMaster ? initMaster(opts, state) : initWorker(opts, state);
+  return instances[id];
 };

@@ -8,9 +8,6 @@ var Promise = require("bluebird"),
 
 var expect = require("chai").expect;
 
-// TODO: test to ensure that more slow connections than available internal
-// request threads does not block.
-
 var bouncer = hotpotato("test", {
   strategies: ["proxying"]
 });
@@ -173,7 +170,7 @@ describe("hotpotato proxy strategy", function() {
       });
   });
 
-  it.only("handles slow inbound requests correctly", function() {
+  it("handles slow inbound requests correctly", function() {
     var self = this;
 
     bouncer.router(function() {
@@ -194,4 +191,9 @@ describe("hotpotato proxy strategy", function() {
         expect(result.body).to.eql("Hello, world!");
       });
   });
+
+  xit("does not block internal queue when a request trickles in");
+  xit("allows pausing of request on proxied end");
+  xit("handles client errors gracefully");
+  xit("recovers from failure on proxy end");
 });

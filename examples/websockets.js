@@ -1,20 +1,20 @@
 "use strict";
 
-// This example shows how you can "sticky" connections to specific workers
-// based on a query string.
+// This example shows how to pass off an incoming websocket upgrade to another
+// worker.
 
 var hotpotato = require("../hotpotato"),
     http = require("http"),
     cluster = require("cluster"),
-    ws = require("ws"),
-    url = require("url");
+    ws = require("ws");
+
+var bouncer = hotpotato("websockets-example");
 
 if (cluster.isMaster) {
-  hotpotato.router = function() {
+  bouncer.router(function() {
     return 2;
-  };
+  });
 
-  cluster.fork();
   cluster.fork();
   cluster.fork();
 } else {
@@ -26,9 +26,8 @@ if (cluster.isMaster) {
   });
 
   server.on("upgrade", function(req, socket, head) {
-    // console.log("Upgrade!", req.headers);
     if (cluster.worker.id !== 2) {
-      return hotpotato.passUpgrade(req, socket, head);
+      return bouncer.passUpgrade(req, socket, head);
     }
 
     wsServer.handleUpgrade(req, socket, head, function(websocket) {
@@ -36,7 +35,7 @@ if (cluster.isMaster) {
     });
   });
 
-  hotpotato.server(server);
+  bouncer.bindTo(server);
 
   if(cluster.worker.id === 1) {
     server.listen(3000);

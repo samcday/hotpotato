@@ -37,6 +37,9 @@ server.on("request", function(req, res) {
   });
 });
 
+server.on("upgrade", function(req, socket, head) {
+  bouncer.passUpgrade(req, socket, head);
+});
 
 if (process.env.LISTEN) {
   server.listen();

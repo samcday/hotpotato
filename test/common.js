@@ -63,13 +63,13 @@ exports.readFullyJSON = function(req) {
   return exports.readFully(req).spread(function(resp, text) {
     return [resp, JSON.parse(text)];
   });
-}
+};
 
 exports.waitForWorker = function(worker, listening) {
   var deferred = Promise.defer();
 
-  worker.on(listening ? "listening" : "online", function() {
-    deferred.resolve();
+  worker.on(listening ? "listening" : "online", function(address) {
+    deferred.resolve(address);
   });
 
   return deferred.promise;
