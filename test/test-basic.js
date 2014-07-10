@@ -27,6 +27,8 @@ var foreverAgent = require("yakaa")({
 var expect = require("chai").expect;
 var common = require("./common");
 
+var bouncer = hotpotato("test");
+
 function readResponse(response) {
   return new Promise(function(resolve) {
     var data = "";
@@ -48,7 +50,7 @@ describe("hotpotato", function() {
   });
 
   beforeEach(function() {
-    hotpotato.router = function() { return -1; };
+    bouncer.router(function() { return -1; });
   });
 
   afterEach(function() {
@@ -60,7 +62,7 @@ describe("hotpotato", function() {
   it("router receives correct params", function() {
     var routerCalled = false;
     var routerDeferred = Promise.defer();
-    hotpotato.router = function(method, url, headers) {
+    bouncer.router(function(method, url, headers) {
       routerCalled = true;
       try {
         expect(method).to.eql("OPTIONS");
@@ -72,7 +74,7 @@ describe("hotpotato", function() {
       }
       routerDeferred.resolve();
       return -1;
-    };
+    });
 
     return Promise.all([routerDeferred.promise, common.spawnListenPasser(function(listenWorker, req) {
       return req("OPTIONS", "/foo/passme", {foo: "bar"})
@@ -84,14 +86,14 @@ describe("hotpotato", function() {
 
   // TODO: midnight coding resulted in this madness. Please clean me up.
   it("passes connections between workers correctly", function(done) {
-    hotpotato.router = function() {
+    bouncer.router(function() {
       return new Promise(function(resolve) {
         var secondWorker = cluster.fork({BEHAVIOR: "listen-echo"});
         secondWorker.on("listening", function() {
           resolve(secondWorker.id);
         });
       });
-    };
+    });
 
     var firstWorker = cluster.fork({BEHAVIOR: "listen-pass"});
     firstWorker.on("listening", function(address) {
@@ -134,9 +136,9 @@ describe("hotpotato", function() {
       expect(headers).to.have.property("foo", "bar");
     });
 
-    hotpotato.router = function() {
+    bouncer.router(function() {
       return worker.id;
-    };
+    });
 
     return common.spawnListenPasser(function(listenWorker, req) {
       return req("OPTIONS", "/foo/passme", {foo: "bar"})
@@ -151,10 +153,10 @@ describe("hotpotato", function() {
     var worker = common.spawnNotifierWorker();
 
     var passed = 0;
-    hotpotato.router = function() {
+    bouncer.router(function() {
       passed++;
       return worker.id;
-    };
+    });
 
     return common.spawnListenPasser(function(listenWorker, req) {
       return req("GET", "/foo/passme").then(function(response) {
@@ -170,9 +172,9 @@ describe("hotpotato", function() {
   it("hands off connection correctly", function() {
     var worker = common.spawnNotifierWorker();
 
-    hotpotato.router = function() {
+    bouncer.router(function() {
       return worker.id;
-    };
+    });
 
     return common.spawnListenPasser(function(listenWorker, req) {
       return Promise.all([
@@ -189,9 +191,9 @@ describe("hotpotato", function() {
   it("handles request handoffs from pipelined requests correctly", function() {
     var worker = common.spawnNotifierWorker();
 
-    hotpotato.router = function() {
+    bouncer.router(function() {
       return worker.id;
-    };
+    });
 
     var HTTPParser = process.binding('http_parser').HTTPParser;
 
@@ -239,9 +241,9 @@ describe("hotpotato", function() {
   it("handles connection handoffs from pipelined requests correctly", function() {
     var worker = common.spawnNotifierWorker();
 
-    hotpotato.router = function() {
+    bouncer.router(function() {
       return worker.id;
-    };
+    });
 
     var HTTPParser = process.binding('http_parser').HTTPParser;
 

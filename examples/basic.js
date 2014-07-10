@@ -1,37 +1,32 @@
 "use strict";
 
-// This example shows how you can "sticky" connections to specific workers
-// based on a query string.
+// This example shows how you can bounce connections from one worker to another.
 
 var hotpotato = require("../hotpotato"),
     http = require("http"),
-    cluster = require("cluster"),
-    url = require("url");
+    cluster = require("cluster");
 
 var bouncer = hotpotato("example");
 
 if (cluster.isMaster) {
-  bouncer.router = function(method, reqUrl) {
-    reqUrl = url.parse(reqUrl, true);
-    return reqUrl.query.worker;
-  };
+  bouncer.router(function() {
+    return 2;
+  });
 
-  cluster.fork();
   cluster.fork();
   cluster.fork();
 } else {
   var server = http.createServer(function(req, res) {
-    var reqUrl = url.parse(req.url, true);
+    console.log(cluster.worker.id + " got " + req.url, req.headers);
 
-    if (!req.headers["x-hotpotato-worker"]) {
-      if (reqUrl.query.worker && parseInt(reqUrl.query.worker, 10) !== cluster.worker.id) {
-        return hotpotato.passConnection(req, res);
-      }
+    if (cluster.worker.id === 1) {
+      return bouncer.passConnection(req, res);
     }
 
     var body = [];
     req.setEncoding("utf8");
     req.on("data", function(data) {
+      console.log("req data.");
       body.push(data);
     });
     req.on("end", function() {
@@ -45,7 +40,7 @@ if (cluster.isMaster) {
     });
   });
 
-  hotpotato.server(server);
+  bouncer.bindTo(server);
 
   if(cluster.worker.id === 1) {
     server.listen(3000);

@@ -3,128 +3,13 @@
 var Promise = require("bluebird"),
     http    = require("http"),
     cluster = require("cluster"),
-    debug   = require("debug"),
     shimmer = require("shimmer"),
-    Agent   = require("yakaa"),
-    debug   = debug("hotpotato:worker" + cluster.worker.id);
-
-module.exports = function(id) {
-  var api = {},
-      clusterphone = require("clusterphone").ns("hotpotato:" + id);
-
-  var targetServer,
-      handoffs;
-
-  api.bindTo = function(server) {
-    if (!server) {
-      throw new Error("A server was already set.");
-    }
-    handoffs = require("./handoffs").map(function(Handoff) {
-      return new Handoff(server);
-    });
-    targetServer = server;
-  };
-
-  api.pass = function(req, res) {
-    if (!targetServer) {
-      throw new Error("No server has been setup.");
-    }
-
-    var handoff;
-    handoffs.some(function(possibleHandoff) {
-      if (possibleHandoff.supports(req, res)) {
-        handoff = possibleHandoff;
-        return true;
-      }
-    });
-
-    handoff.handle(req, res);
-  };
-
-  return api;
-};
-
 
 var HTTPParser = process.binding('http_parser').HTTPParser;
 
 // TODO: clean up socket state on finished pass.
 // TODO: figure out how we handle failed passes gracefully.
 // TODO: intra-cluster agent pool size needs to be tunable.
-
-// This will run a http.Server listening on the separate socket the master
-// directs us to.
-var sideChannelServer;
-
-// This is the http.Agent we use when talking to intra-cluster workers.
-// It pools connections and keeps them alive for a configrable timeout.
-// This is preferable over Node.js default Agent, which *does* use keep-alive,
-// but will close a socket if there's no requests queued up to use it.
-// The max-sockets here is on a per host basis.
-var workerAgent = new Agent({
-    maxSockets: 20,
-    maxFreeSockets: 20,
-    keepAlive: true,
-    keepAliveTimeoutMsecs: 10000
-});
-
-// This is the actual server that is handling requests in caller. We pump
-// sidechanneled requests into this. We also attach the transferred connection
-// to this server.
-var targetServer;
-
-function setupSideChannelServer() {
-  debug("Creating side-channel server");
-
-  sideChannelServer = http.createServer();
-  // Regular listen() call results in net module asking cluster to step in and
-  // get the master to create server FD for us. Which we don't want.
-  sideChannelServer._listen2("127.0.0.1", 0, null, -1);
-
-  sideChannelServer.on("connection", function(connection) {
-    connection._hotpotato = {
-      isRerouted: true
-    };
-  });
-
-  sideChannelServer.on("request", function(req, res) {
-    var routeId = req.headers["x-hotpotato-routeid"];
-
-    if (!targetServer) {
-      debug("Side channel request for " + routeId + " received, but no dest server to forward to.");
-      // TODO: properly handle this.
-      req.abort();
-      res.writeHead(500);
-      res.end();
-    }
-
-    // TODO: I think this is safe - keep-alive on the internal side-channel
-    // connections should be fine. Without this, pipelined requests from the
-    // remote client will break.
-    // var shouldKeepAlive = req.headers["x-hotpotato-keepalive"] === "true";
-    // res.shouldKeepAlive = shouldKeepAlive;
-
-    // TODO: we should handle this on the proxying side, not here.
-    res.shouldKeepAlive = true;
-
-    debug("Side channel got request for routeId " + routeId);
-    targetServer.emit("request", req, res);
-  });
-
-  return new Promise(function(resolve) {
-    sideChannelServer.on("listening", function() {
-      var address = sideChannelServer.address();
-      var connectionDetails = {
-        host: address.address,
-        port: address.port
-      };
-      resolve(connectionDetails);
-    });
-  });
-}
-
-clusterphone.handlers.init = function() {
-  return setupSideChannelServer();
-};
 
 clusterphone.handlers.connection = function(connectionData, socket) {
   var routeId = connectionData.routeId;
@@ -209,26 +94,12 @@ function connectionHandler(connection) {
 
 function handlePassingRequest(req, res) {
   var deferred = Promise.defer(),
-      routeId = req._hotpotato.routeId,
-      targetWorker = req._hotpotato.targetWorker,
-      socket = req.connection,
-      socketAddress = socket.remoteAddress + ":" + socket.remotePort;
 
   req.headers["X-HOTPOTATO-WORKER"] = cluster.worker.id;
   req.headers["X-HOTPOTATO-ROUTEID"] = routeId;
   req.headers["X-HOTPOTATO-KEEPALIVE"] = res.shouldKeepAlive;
 
-  debug("Proxying request for routeId " + routeId + " from " + socketAddress + " to worker " + targetWorker);
 
-  // Open a connection to the target and proxy the inbound request to it.
-  var proxyReq = http.request({
-    agent: workerAgent,
-    host: req._hotpotato.proxyTo.host,
-    port: req._hotpotato.proxyTo.port,
-    path: req.url,
-    method: req.method,
-    headers: req.headers
-  });
 
   req.pipe(proxyReq);
 
@@ -364,14 +235,9 @@ function pass(passConnection, req, res) {
   // where to route this request to.
   req.pause();
 
-  var requestData = {
-    method: req.method,
-    url: req.url,
-    headers: req.headers
-  };
 
-  return clusterphone.sendToMaster("routeRequest", requestData).ackd()
-    .then(function(routeReply) {
+
+    
       req._hotpotato.routeId = routeReply.routeId;
       req._hotpotato.targetWorker = routeReply.workerId;
       req._hotpotato.proxyTo = routeReply.connection;
@@ -382,16 +248,7 @@ function pass(passConnection, req, res) {
 
       // It's safe to resume the request now.
       req.resume();
-
-      handlePassingRequest(req, res);
     })
-    .catch(function(err) {
-      // TODO: handle this better.
-      debug("Failed to pass off connection: " + err.origStack);
-      res.writeHead(500);
-      res.end();
-      return;
-    });
 }
 
 function setServer(server) {
