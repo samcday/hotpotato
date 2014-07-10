@@ -8,14 +8,14 @@ var cluster = require("cluster"),
 
 var expect = require("chai").expect;
 
-describe("hotpotato correctness tests", function() {
+describe("hotpotato under high concurrent load", function() {
   before(function() {
     cluster.setupMaster({
       exec: __dirname + "/worker-entrypoint.js"
     });
   });
 
-  it("passConnection operates correct under high concurrent load", function(done) {
+  it("passes connections correctly", function(done) {
     this.timeout(30000);
     var numRounds = 1000;
     var concurrency = 50;
@@ -58,6 +58,81 @@ describe("hotpotato correctness tests", function() {
               expect(resp2.read()).to.equal("worker" + worker2.id);
               connection.destroy();
               cb();
+            });
+          });
+        });
+      });
+    };
+
+    worker1.on("listening", function(address) {
+      var q = async.queue(runRound, concurrency);
+      for (var i = 0; i < numRounds; i++) {
+        q.push(address.port);
+      }
+
+      q.drain = done;
+    });
+  });
+
+  it.only("passes connections multiple times correctly", function(done) {
+    this.timeout(30000);
+    var numRounds = 1000;
+    var concurrency = 50;
+
+    // Three workers. One that listens and passes, and two that don't.
+    var worker1 = cluster.fork({BEHAVIOR: "pass", LISTEN: 1});
+    var worker2 = cluster.fork({BEHAVIOR: "pass"});
+    var worker3 = cluster.fork({BEHAVIOR: "echo"});
+
+    hotpotato.router = function(method, url, headers) {
+      return parseInt(url[url.length-1], 10);
+    };
+
+    var runRound = function(port, cb) {
+      var connection;
+      var req = http.request({
+        path: "/passconn/" + worker2.id,
+        port: port,
+        createConnection: function() { connection = net.createConnection({port: port}); return connection; },
+      });
+      req.agent = true;
+      req.shouldKeepAlive = true;
+      req.end();
+
+      req.on("response", function(resp) {
+        resp.setEncoding("utf8");
+        resp.once("readable", function() {
+          expect(resp.read()).to.equal("worker" + worker2.id);
+        });
+
+        resp.on("end", function() {
+          var req2 = http.request({
+            path: "/passconn/" + worker3.id,
+            createConnection: function() { return connection; },
+          });
+          req2.shouldKeepAlive = true;
+          req2.agent = true;
+          req2.end();
+
+          req2.on("response", function(resp2) {
+            resp2.setEncoding("utf8");
+            resp2.once("readable", function() {
+              expect(resp2.read()).to.equal("worker" + worker3.id);
+            });
+            resp2.on("end", function() {
+              var req3 = http.request({
+                path: "/foo",
+                createConnection: function() { return connection; },
+              });
+              req3.end();
+              req3.on("response", function(resp3) {
+                resp3.setEncoding("utf8");
+                resp3.once("readable", function() {
+                  expect(resp3.read()).to.equal("worker" + worker3.id);
+                  connection.destroy();
+                  cb();
+                });
+              });
             });
           });
         });

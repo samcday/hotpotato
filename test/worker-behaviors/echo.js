@@ -11,3 +11,7 @@ server.on("request", function(req, res) {
   res.writeHead(200);
   res.end("worker" + cluster.worker.id);
 });
+
+if (process.env.LISTEN) {
+  server.listen();
+}

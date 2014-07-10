@@ -10,7 +10,7 @@ var Promise = require("bluebird"),
     cluster = require("cluster"),
     _debug  = require("debug");
 
-function initMaster(state) {
+function initMaster(opts, state) {
   var api = {},
       debug = _debug(state.debugName("core"));
 
@@ -74,7 +74,7 @@ function initMaster(state) {
   return api;
 }
 
-function initWorker(state) {
+function initWorker(opts, state) {
   var api = {},
       clusterphone = state.clusterphone,
       debug = _debug(state.debugName("core"));
@@ -158,7 +158,6 @@ module.exports = function(id, opts) {
 
   var myName = cluster.isMaster ? "master" : ("worker" + cluster.worker.id);
 
-  // TODO: handle opts.
   opts = opts || {};
 
   var state = {
@@ -179,8 +178,11 @@ module.exports = function(id, opts) {
   var handoffStrategies = require("./handoffs");
   state.handoffs = {};
   Object.keys(handoffStrategies).forEach(function(strategy) {
+    if (Array.isArray(opts.strategies) && opts.strategies.indexOf(strategy === -1)) {
+      return;
+    }
     state.handoffs[strategy] = new handoffStrategies[strategy](state);
   });
 
-  return cluster.isMaster ? initMaster(state) : initWorker(state);
+  return cluster.isMaster ? initMaster(opts, state) : initWorker(opts, state);
 };

@@ -25,7 +25,7 @@ exports.spawnNotifierWorker = function(notify) {
 var agent = new http.Agent({maxSockets: 1});
 
 exports.spawnListenPasser = function(cb) {
-  var listener = cluster.fork({BEHAVIOR: "listen-pass"});
+  var listener = cluster.fork({BEHAVIOR: "pass", LISTEN: 1});
   var deferred = Promise.defer();
   listener.on("listening", function(address) {
     var requestFn = function(method, url, headers) {
