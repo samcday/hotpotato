@@ -35,7 +35,13 @@ describe("hotpotato proxy strategy", function() {
     ]);
   });
 
-  it.only("bounces requests correctly", function() {
+  afterEach(function() {
+    Object.keys(cluster.workers).forEach(function(workerId) {
+      cluster.workers[workerId].kill();
+    });
+  });
+
+  it("bounces requests correctly", function() {
     var echo = this.echo;
 
     bouncer.router(function() {
@@ -53,21 +59,47 @@ describe("hotpotato proxy strategy", function() {
       });
   });
 
-  it.only("bounces connections correctly", function() {
+  it("only bounces first request", function() {
     var self = this;
 
     bouncer.router(function() {
       return self.echo.id;
     });
 
-    return common.requestToWorker(self.listenPass, { path: "/passconn" })
+    return common.requestToWorker(this.listenPass, { path: "/passme", agent: keepaliveAgent })
+      .then(function(req) {
+        req.end();
+
+        return common.readFully(req);
+      })
+      .then(function(text) {
+        expect(text).to.eql("worker" + self.echo.id);
+        return common.requestToWorker(self.listenPass, { path: "/foo", agent: keepaliveAgent });
+      })
+      .then(function(req) {
+        req.end();
+        return common.readFully(req);
+      })
+      .then(function(text) {
+        expect(text).to.eql("worker" + self.listenPass.id);
+      });
+  });
+
+  it("bounces connections correctly", function() {
+    var self = this;
+
+    bouncer.router(function() {
+      return self.echo.id;
+    });
+
+    return common.requestToWorker(self.listenPass, { path: "/passconn", agent: keepaliveAgent })
       .then(function(req) {
         req.end();
         return common.readFully(req);
       })
       .then(function(text) {
         expect(text).to.eql("worker" + self.echo.id);
-        return common.requestToWorker(self.listenPass, { path: "/foo"});
+        return common.requestToWorker(self.listenPass, { path: "/foo", agent: keepaliveAgent });
       })
       .then(function(req) {
         req.end();

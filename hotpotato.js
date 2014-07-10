@@ -86,6 +86,12 @@ function initWorker(opts, state) {
       throw new Error("You can only set up one server for Hotpotato workers.");
     }
     state.targetServer = server;
+
+    Object.keys(state.handoffs).forEach(function(strategy) {
+      if (state.handoffs[strategy].configureServer) {
+        state.handoffs[strategy].configureServer(server);
+      }
+    });
   };
 
   var pass = function(passConnection, req, res) {
@@ -116,11 +122,11 @@ function initWorker(opts, state) {
 
     debug("Handing off request using " + selectedStrategy, requestData);
 
-    Promise.resolve(handoff.preRoute(req, res)).then(function() {
+    Promise.resolve(handoff.preRoute(passConnection, req, res)).then(function() {
       return clusterphone.sendToMaster("routeRequest", requestData).ackd()
         .then(function(routeReply) {
           debug("Got handoff reply", routeReply);
-          handoff.postRoute(routeReply, req, res);
+          handoff.postRoute(passConnection, routeReply, req, res);
         })
         .catch(function(err) {
           if (err.origMessage) {

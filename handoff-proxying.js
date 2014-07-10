@@ -16,6 +16,7 @@ var Promise = require("bluebird"),
     http    = require("http"),
     util    = require("util"),
     _debug  = require("debug"),
+    shimmer = require("shimmer"),
     Agent   = require("yakaa");
 
 function ProxyingMaster(state) {
@@ -102,19 +103,7 @@ function ProxyingWorker(state) {
 
   // TODO: this needs to handle error cases.
   // This method handles the process of proxying request over to remote worker.
-  var proxyRequest = function(req, res, routeReply) {
-    var handoffId = routeReply.handoffId,
-        targetWorker = routeReply.workerId,
-        socket = req.connection,
-        socketAddress = socket.remoteAddress + ":" + socket.remotePort;
-
-    proxyOutbounds[handoffId] = {
-      req: req,
-      res: res
-    };
-
-    debug("Proxying request for handoffId " + handoffId + " from " + socketAddress + " to worker " + targetWorker);
-
+  var doProxyRequest = function(req) {
     // This represents the active connection we have with the proxy endpoint
     // *right now*. As bytes come in from underlying request we shunt them in
     // here. If this is undefined though, we need to reopen.
@@ -124,15 +113,18 @@ function ProxyingWorker(state) {
         bufferedData = [],
         reqDone = false;
 
+    var connectionDetails = req._hotpotato.dest,
+        proxyId = req._hotpotato.proxyId;
+
     var finishProxying = function(data) {
       var reqOpts = {
         path: "/req-done",
         method: "POST",
         agent: workerAgent,
-        host: routeReply.connection.host,
-        port: routeReply.connection.port,
+        host: connectionDetails.host,
+        port: connectionDetails.port,
         headers: {
-          "X-Hotpotato-Handoff-ID": handoffId
+          "X-Hotpotato-Proxy-ID": proxyId
         }
       };
 
@@ -154,10 +146,10 @@ function ProxyingWorker(state) {
         path: initial === true ? "/req-start" : "/req-continue",
         method: "POST",
         agent: workerAgent,
-        host: routeReply.connection.host,
-        port: routeReply.connection.port,
+        host: connectionDetails.host,
+        port: connectionDetails.port,
         headers: {
-          "X-Hotpotato-Handoff-ID": handoffId
+          "X-Hotpotato-Proxy-ID": proxyId
         }
       };
 
@@ -243,15 +235,15 @@ function ProxyingWorker(state) {
   };
 
   var handleProxyResponse = function(req, res) {
-    var handoffId = parseInt(req.headers["x-hotpotato-handoff-id"], 10),
-        outbound = proxyOutbounds[handoffId],
+    var proxyId = req.headers["x-hotpotato-proxy-id"],
+        outbound = proxyOutbounds[proxyId],
         status = parseInt(req.headers["x-hotpotato-status"], 10),
         phrase = req.headers["x-hotpotato-phrase"];
 
-    debug("Got proxy response for handoffId " + handoffId);
+    debug("Got proxy response for proxyId " + proxyId);
 
     // Sanitize headers.
-    delete req.headers["x-hotpotato-handoff-id"];
+    delete req.headers["x-hotpotato-proxy-id"];
     delete req.headers["x-hotpotato-status"];
     delete req.headers["x-hotpotato-phrase"];
     delete req.headers["transfer-encoding"];
@@ -300,7 +292,7 @@ function ProxyingWorker(state) {
         });
       }
 
-      headers["X-Hotpotato-Handoff-ID"] = handoffId;
+      headers["X-Hotpotato-Proxy-ID"] = handoffId;
       headers["X-Hotpotato-Status"] = statusCode;
       headers["X-Hotpotato-Phrase"] = reasonPhrase;
 
@@ -333,42 +325,18 @@ function ProxyingWorker(state) {
       proxyReq.end();
     };
   }
-
   util.inherits(ProxiedServerResponse, http.ServerResponse);
-
-  // // Set up a fake "res" object. The res is a real http.ServerResponse, but
-  // // we override write / end 
-  // var createProxiedOutbound = function(proxiedReq, underlyingRes) {
-  //   var res = new http.ServerResponse(newReq);
-
-  //   var buffers = [],
-  //       bufferEncs = [];
-
-  //   res.write = function(data, encoding) {
-  //     buffers.push(data);
-  //     bufferEncs.push(encoding);
-  //   };
-
-  //   // TODO: handle origin being dead by the time we're ready to respond.
-  //   res.end = function() {
-  //     var req = http.request({
-
-  //     });
-  //   };
-
-  //   return res;
-  // };
 
   // This sets up a shim req and res for an inbound proxied request, and then
   // pumps it into the target server.
   var setupProxiedRequest = function(req, res) {
-    var handoffId = parseInt(req.headers["x-hotpotato-handoff-id"], 10),
+    var proxyId = req.headers["x-hotpotato-proxy-id"],
         url = req.headers["x-hotpotato-url"],
         method = req.headers["x-hotpotato-verb"],
         host = req.headers["x-hotpotato-host"],
         origin = req.headers["x-hotpotato-origin"];
 
-    debug("Handling proxied request for handoffId " + handoffId);
+    debug("Handling proxied request for proxyId " + proxyId);
 
     var originParts = origin.split(":");
     origin = {
@@ -396,7 +364,7 @@ function ProxyingWorker(state) {
     newReq.httpVersion = "1.1";
 
     // Sanitize the headers.
-    delete newReq.headers["x-hotpotato-handoff-id"];
+    delete newReq.headers["x-hotpotato-proxy-id"];
     delete newReq.headers["x-hotpotato-url"];
     delete newReq.headers["x-hotpotato-verb"];
     delete newReq.headers["x-hotpotato-host"];
@@ -404,9 +372,9 @@ function ProxyingWorker(state) {
     newReq.headers.host = host;
 
 
-    var newRes = new ProxiedServerResponse(newReq, origin, handoffId);
+    var newRes = new ProxiedServerResponse(newReq, origin, proxyId);
 
-    proxyInbounds[handoffId] = {
+    proxyInbounds[proxyId] = {
       req: newReq,
       res: newRes
     };
@@ -424,10 +392,10 @@ function ProxyingWorker(state) {
   };
 
   var handleContinuedProxyRequest = function(req, res) {
-    var handoffId = parseInt(req.headers["x-hotpotato-handoff-id"], 10),
-        underlyingReq = proxyInbounds[handoffId];
+    var proxyId = req.headers["x-hotpotato-proxy-id"],
+        underlyingReq = proxyInbounds[proxyId];
 
-    debug("Got data from proxied request for handoffId " + handoffId);
+    debug("Got data from proxied request for proxyId " + proxyId);
 
     req.on("data", function(data) {
       underlyingReq.emit("data", data);
@@ -441,8 +409,8 @@ function ProxyingWorker(state) {
   };
 
   var handleFinishedProxyRequest = function(req, res) {
-    var handoffId = parseInt(req.headers["x-hotpotato-handoff-id"], 10),
-        underlying = proxyInbounds[handoffId];
+    var proxyId = req.headers["x-hotpotato-proxy-id"],
+        underlying = proxyInbounds[proxyId];
 
     req.on("end", function() {
       underlying.req.emit("end");
@@ -465,23 +433,96 @@ function ProxyingWorker(state) {
     }
   });
 
+  var handlePass = function(req, res) {
+    var socket = req.connection;
+
+    if (socket._hotpotato.proxyPassing) {
+      var data = socket._hotpotato;
+      req._hotpotato = {
+        targetWorker: data.targetWorker,
+        dest: data.dest,
+        handoffId: data.handoffId,
+        proxyId: data.handoffId + "-" + data.requestCounter++
+      };
+    }
+
+    proxyOutbounds[req._hotpotato.proxyId] = {
+      req: req,
+      res: res
+    };
+
+    doProxyRequest(req);
+  };
+
+  var setupPass = function(req, res, passConnection, routeReply) {
+    var handoffId = routeReply.handoffId,
+        targetWorker = routeReply.workerId,
+        socket = req.connection,
+        socketAddress = socket.remoteAddress + ":" + socket.remotePort;
+
+    socket._hotpotato = socket._hotpotato || {};
+
+    if (passConnection) {
+      debug("Proxying connection for handoffId " + handoffId + " from " + socketAddress + " to worker " + targetWorker);
+      socket._hotpotato.proxyPassing = true;
+    } else {
+      debug("Proxying request for handoffId " + handoffId + " from " + socketAddress + " to worker " + targetWorker);
+    }
+
+    socket._hotpotato.handoffId = handoffId;
+    socket._hotpotato.targetWorker = targetWorker;
+    socket._hotpotato.requestCounter = 1;
+    socket._hotpotato.dest = routeReply.connection;
+
+    req._hotpotato = {
+      targetWorker: targetWorker,
+      handoffId: handoffId,
+      dest: routeReply.connection,
+      proxyId: handoffId + "-1"
+    };
+
+    handlePass(req, res);
+  };
+
+  // When we do "connection passing" with this strategy, what we're really doing
+  // is just pretending. We'll stop request events being emitted on the server
+  // and proxy them instead.
+  var wrapServer = function(server) {
+    shimmer.wrap(server, "emit", function(original) {
+      return function(event) {
+        if (event === "request") {
+          var req = arguments[1];
+          if (req.connection._hotpotato && req.connection._hotpotato.proxyPassing) {
+            debug("Intercepted request on a connection we're passing.");
+            handlePass(req, arguments[2]);
+            return;
+          }
+        }
+        return original.apply(this, arguments);
+      };
+    });
+  };
+
   return {
     canHandle: function(passConnection, req) {
       // This strategy can handle anything. Except upgrades.
       return req.headers.upgrade === undefined;
     },
-    preRoute: function(req) {
+    preRoute: function(passConnection, req) {
       // Make sure we don't miss any data while we're waiting for master to
       // route this request.
       req.pause();
     },
-    postRoute: function(routeReply, req, res) {
+    postRoute: function(passConnection, routeReply, req, res) {
       // Safe to resume data events on underlying request now.
       req.resume();
 
       // Start proxying this request over to destination.
-      proxyRequest(req, res, routeReply);
-    }
+      setupPass(req, res, passConnection, routeReply);
+    },
+    configureServer: function(server) {
+      wrapServer(server);
+    },
   };
 }
 
