@@ -41,21 +41,106 @@ describe("hotpotato proxy strategy", function() {
     });
   });
 
-  it("bounces requests correctly", function() {
+  it("passes requests with correct data", function() {
     var echo = this.echo;
 
     bouncer.router(function() {
       return echo.id;
     });
 
-    return common.requestToWorker(this.listenPass, { path: "/passme" })
+    var reqOpts = {
+      path: "/passme",
+      method: "PUT",
+      headers: {
+        host: "foo.bar",
+        awesome: "sauce"
+      }
+    };
+
+    return common.requestToWorker(this.listenPass, reqOpts)
       .then(function(req) {
+        req.write("Hello, world!");
         req.end();
 
-        return common.readFully(req);
+        return common.readFullyJSON(req);
       })
-      .then(function(result) {
-        expect(result).to.eql("worker" + echo.id);
+      .spread(function(response, result) {
+        expect(response.statusCode).to.eql(203);
+        // expect(response.reasonPhrase).to.eql("bacon");   // LAME - node http client doens't expose reason phrase!
+        expect(result.me).to.eql(echo.id);
+        expect(result.method).to.eql("PUT");
+        expect(result.body).to.eql("Hello, world!");
+        expect(result.headers).to.eql({
+          host: "foo.bar",
+          awesome: "sauce",
+          connection: "keep-alive",   // TODO: this is actually wrong. FIXME.
+          "transfer-encoding": "chunked"
+        });
+      });
+  });
+
+  it("passes connections with correct data", function() {
+    var self = this;
+
+    bouncer.router(function() {
+      return self.echo.id;
+    });
+
+    var reqOpts = {
+      path: "/passconn",
+      method: "PUT",
+      agent: keepaliveAgent,
+      headers: {
+        host: "foo.bar",
+        awesome: "sauce"
+      }
+    };
+
+    return common.requestToWorker(self.listenPass, reqOpts)
+      .then(function(req) {
+        req.write("Hello, world!");
+        req.end();
+        return common.readFullyJSON(req);
+      })
+      .spread(function(response, result) {
+        expect(response.statusCode).to.eql(203);
+        expect(result.me).to.eql(self.echo.id);
+        expect(result.method).to.eql("PUT");
+        expect(result.body).to.eql("Hello, world!");
+        expect(result.headers).to.eql({
+          host: "foo.bar",
+          awesome: "sauce",
+          connection: "keep-alive",
+          "transfer-encoding": "chunked"
+        });
+
+        reqOpts = {
+          path: "/foo",
+          method: "PUT",
+          agent: keepaliveAgent,
+          headers: {
+            host: "bar.foo",
+            sauce: "awesome"
+          }
+        };
+        return common.requestToWorker(self.listenPass, reqOpts);
+      })
+      .then(function(req) {
+        req.write("Hello, world!");
+        req.end();
+        return common.readFullyJSON(req);
+      })
+      .spread(function(response, result) {
+        expect(response.statusCode).to.eql(203);
+        expect(result.me).to.eql(self.echo.id);
+        expect(result.method).to.eql("PUT");
+        expect(result.body).to.eql("Hello, world!");
+        expect(result.headers).to.eql({
+          host: "bar.foo",
+          sauce: "awesome",
+          connection: "keep-alive",
+          "transfer-encoding": "chunked"
+        });
       });
   });
 
@@ -70,43 +155,18 @@ describe("hotpotato proxy strategy", function() {
       .then(function(req) {
         req.end();
 
-        return common.readFully(req);
+        return common.readFullyJSON(req);
       })
-      .then(function(text) {
-        expect(text).to.eql("worker" + self.echo.id);
+      .spread(function(response, result) {
+        expect(result.me).to.eql(self.echo.id);
         return common.requestToWorker(self.listenPass, { path: "/foo", agent: keepaliveAgent });
       })
       .then(function(req) {
         req.end();
-        return common.readFully(req);
+        return common.readFullyJSON(req);
       })
-      .then(function(text) {
-        expect(text).to.eql("worker" + self.listenPass.id);
-      });
-  });
-
-  it("bounces connections correctly", function() {
-    var self = this;
-
-    bouncer.router(function() {
-      return self.echo.id;
-    });
-
-    return common.requestToWorker(self.listenPass, { path: "/passconn", agent: keepaliveAgent })
-      .then(function(req) {
-        req.end();
-        return common.readFully(req);
-      })
-      .then(function(text) {
-        expect(text).to.eql("worker" + self.echo.id);
-        return common.requestToWorker(self.listenPass, { path: "/foo", agent: keepaliveAgent });
-      })
-      .then(function(req) {
-        req.end();
-        return common.readFully(req);
-      })
-      .then(function(text) {
-        expect(text).to.eql("worker" + self.echo.id);
+      .spread(function(response, result) {
+        expect(result.me).to.eql(self.listenPass.id);
       });
   });
 });

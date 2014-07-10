@@ -15,6 +15,7 @@ var Promise = require("bluebird"),
     cluster = require("cluster"),
     http    = require("http"),
     util    = require("util"),
+    stream  = require("stream"),
     _debug  = require("debug"),
     shimmer = require("shimmer"),
     Agent   = require("yakaa");
@@ -154,11 +155,15 @@ function ProxyingWorker(state) {
       };
 
       if (initial === true) {
+        var remoteAddress = req.connection.address();
+
         reqOpts.headers["X-Hotpotato-URL"] = req.url;
         reqOpts.headers["X-Hotpotato-Verb"] = req.method;
         reqOpts.headers["X-Hotpotato-Host"] = req.headers.host;
         reqOpts.headers["X-Hotpotato-Origin"] = internalAddress;
-        Object.keys(req.headers, function(headerName) {
+        reqOpts.headers["X-Hotpotato-From"] = JSON.stringify(remoteAddress);
+
+        Object.keys(req.headers).forEach(function(headerName) {
           if (headerName === "transfer-encoding" ||
               headerName === "connection") {
             return;
@@ -261,6 +266,17 @@ function ProxyingWorker(state) {
     });
   };
 
+  function ProxiedIncomingMessage(socket) {
+    http.IncomingMessage.call(this, socket);
+    stream.PassThrough.call(this);
+  }
+
+  util.inherits(ProxiedIncomingMessage, stream.PassThrough);
+  Object.keys(http.IncomingMessage.prototype).forEach(function(method) {
+    if (!ProxiedIncomingMessage.prototype[method])
+      ProxiedIncomingMessage.prototype[method] = http.IncomingMessage.prototype[method];
+  });
+
   // TODO: handle timeouts on writing out response.
   function ProxiedServerResponse(req, origin, handoffId) {
     http.ServerResponse.call(this, req);
@@ -321,7 +337,10 @@ function ProxyingWorker(state) {
         throw new Error("end() called before writeHead");
       }
 
-      proxyReq.write(chunk, encoding);
+      if (chunk) {
+        proxyReq.write(chunk, encoding);
+      }
+
       proxyReq.end();
     };
   }
@@ -334,7 +353,8 @@ function ProxyingWorker(state) {
         url = req.headers["x-hotpotato-url"],
         method = req.headers["x-hotpotato-verb"],
         host = req.headers["x-hotpotato-host"],
-        origin = req.headers["x-hotpotato-origin"];
+        origin = req.headers["x-hotpotato-origin"],
+        from = JSON.parse(req.headers["x-hotpotato-from"]);
 
     debug("Handling proxied request for proxyId " + proxyId);
 
@@ -350,10 +370,18 @@ function ProxyingWorker(state) {
 
     // We set up a fake socket to ensure certain internals of http don't fail.
     var fakeSocket = {
-      readable: false
+      readable: false,
+      address: function() {
+        return from;
+      }
     };
 
-    var newReq = new http.IncomingMessage(fakeSocket);
+    // var newReq = new http.IncomingMessage(fakeSocket);
+    var newReq = new ProxiedIncomingMessage(fakeSocket);
+
+    newReq._hotpotato = {
+
+    };
 
     newReq.url = url;
     newReq.method = method;
@@ -369,8 +397,8 @@ function ProxyingWorker(state) {
     delete newReq.headers["x-hotpotato-verb"];
     delete newReq.headers["x-hotpotato-host"];
     delete newReq.headers["x-hotpotato-origin"];
+    delete newReq.headers["x-hotpotato-from"];
     newReq.headers.host = host;
-
 
     var newRes = new ProxiedServerResponse(newReq, origin, proxyId);
 
@@ -383,7 +411,7 @@ function ProxyingWorker(state) {
 
     // Pump data from the proxy req into the simulated req.
     req.on("data", function(data) {
-      newReq.emit("data", data);
+      newReq.write(data);
     });
 
     req.on("end", function() {
@@ -398,7 +426,7 @@ function ProxyingWorker(state) {
     debug("Got data from proxied request for proxyId " + proxyId);
 
     req.on("data", function(data) {
-      underlyingReq.emit("data", data);
+      newReq.write(data);
     });
 
     req.on("end", function() {

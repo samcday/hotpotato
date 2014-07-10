@@ -52,12 +52,18 @@ exports.readFully = function(req) {
       buffered += chunk;
     });
     resp.on("end", function() {
-      deferred.resolve(buffered);
+      deferred.resolve([resp, buffered]);
     });
   });
 
   return deferred.promise;
 };
+
+exports.readFullyJSON = function(req) {
+  return exports.readFully(req).spread(function(resp, text) {
+    return [resp, JSON.parse(text)];
+  });
+}
 
 exports.waitForWorker = function(worker, listening) {
   var deferred = Promise.defer();

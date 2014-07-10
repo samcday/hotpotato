@@ -99,6 +99,10 @@ function initWorker(opts, state) {
       throw new Error("No server has been setup.");
     }
 
+    if (req._hotpotato) {
+      throw new Error("You're trying to pass a connection that has already been proxied from another server. This is not supported.");
+    }
+
     var selectedStrategy;
     Object.keys(state.handoffs).some(function(strategy) {
       if (state.handoffs[strategy].canHandle(passConnection, req, res)) {

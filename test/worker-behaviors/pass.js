@@ -12,8 +12,6 @@ var bouncer = hotpotato("test", {
 bouncer.bindTo(server);
 
 server.on("request", function(req, res) {
-  req.headers["x-from"] = cluster.worker.id;
-
   if (/^\/passme/.test(req.url)) {
     return bouncer.passRequest(req, res);
   }
@@ -22,8 +20,21 @@ server.on("request", function(req, res) {
     return bouncer.passConnection(req, res);
     }
   }
+
   res.writeHead(200);
-  res.end("worker" + cluster.worker.id);
+  var data = "";
+  req.setEncoding("utf8");
+  req.on("data", function(chunk) {
+    data += chunk;
+  });
+
+  req.on("end", function() {
+    res.end(JSON.stringify({
+      me: cluster.worker.id,
+      headers: req.headers,
+      body: data
+    }));
+  });
 });
 
 

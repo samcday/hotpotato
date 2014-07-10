@@ -10,8 +10,22 @@ var bouncer = hotpotato("test", {
 bouncer.bindTo(server);
 
 server.on("request", function(req, res) {
-  res.writeHead(200);
-  res.end("worker" + cluster.worker.id);
+  res.writeHead(203, "bacon");
+
+  var data = "";
+  req.setEncoding("utf8");
+  req.on("data", function(chunk) {
+    data += chunk;
+  });
+
+  req.on("end", function() {
+    res.end(JSON.stringify({
+      me: cluster.worker.id,
+      method: req.method,
+      headers: req.headers,
+      body: data
+    }));
+  });
 });
 
 if (process.env.LISTEN) {
