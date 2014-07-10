@@ -2,8 +2,7 @@
 
 var Promise = require("bluebird"),
     cluster = require("cluster"),
-    http    = require("http"),
-    shimmer = require("shimmer");
+    http    = require("http");
 
 exports.spawn = function(type, listen) {
   var env = {BEHAVIOR: type};
@@ -37,7 +36,38 @@ exports.requestToWorker = function(worker, opts) {
   }
 
   return deferred.promise;
-}
+};
+
+exports.readFully = function(req) {
+  var deferred = Promise.defer();
+
+  req.on("response", function(resp) {
+    resp.on("error", function(err) {
+      deferred.reject(err);
+    });
+
+    var buffered = "";
+    resp.setEncoding("utf8");
+    resp.on("data", function(chunk) {
+      buffered += chunk;
+    });
+    resp.on("end", function() {
+      deferred.resolve(buffered);
+    });
+  });
+
+  return deferred.promise;
+};
+
+exports.waitForWorker = function(worker, listening) {
+  var deferred = Promise.defer();
+
+  worker.on(listening ? "listening" : "online", function() {
+    deferred.resolve();
+  });
+
+  return deferred.promise;
+};
 
 exports.spawnNotifierWorker = function(notify) {
   var worker = cluster.fork({BEHAVIOR: "notify-received"});
@@ -56,7 +86,7 @@ exports.spawnNotifierWorker = function(notify) {
   });
 
   return worker;
-}
+};
 
 var agent = new http.Agent({maxSockets: 1});
 

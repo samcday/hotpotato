@@ -4,7 +4,9 @@ var hotpotato = require("../../hotpotato");
 var server = require("http").createServer();
 var cluster = require("cluster");
 
-var bouncer = hotpotato("test");
+var bouncer = hotpotato("test", {
+  strategies: ["proxying"]
+});
 bouncer.bindTo(server);
 
 server.on("request", function(req, res) {

@@ -178,7 +178,7 @@ module.exports = function(id, opts) {
   var handoffStrategies = require("./handoffs");
   state.handoffs = {};
   Object.keys(handoffStrategies).forEach(function(strategy) {
-    if (Array.isArray(opts.strategies) && opts.strategies.indexOf(strategy === -1)) {
+    if (Array.isArray(opts.strategies) && opts.strategies.indexOf(strategy) === -1) {
       return;
     }
     state.handoffs[strategy] = new handoffStrategies[strategy](state);
