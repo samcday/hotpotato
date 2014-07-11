@@ -106,7 +106,7 @@ describe("hotpotato Upgrade handling", function() {
     });
   });
 
-  it.only("behaves correctly with many concurrent connections", function() {
+  it("behaves correctly with many concurrent connections", function() {
     var self = this;
 
     bouncer.router(function() {
