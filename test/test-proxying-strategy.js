@@ -196,4 +196,5 @@ describe("hotpotato proxy strategy", function() {
   xit("allows pausing of request on proxied end");
   xit("handles client errors gracefully");
   xit("recovers from failure on proxy end");
+  xit("behaves correctly with many concurrent connections");
 });

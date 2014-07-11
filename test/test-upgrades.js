@@ -53,4 +53,5 @@ describe("hotpotato Upgrade handling", function() {
   xit("manages errored upgrade connections correctly");
   xit("handles upgrades that die during handoff gracefully");
   xit("gracefully handles routing failure during handoff");
+  xit("behaves correctly with many concurrent connections");
 });
