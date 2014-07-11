@@ -23,7 +23,7 @@ function writeHttpError(socket) {
   }
 }
 
-function initMaster(opts, state) {
+function initMaster(state) {
   var api = {},
       debug = _debug(state.debugName("core")),
       clusterphone = state.clusterphone;
@@ -115,7 +115,7 @@ function initMaster(opts, state) {
   return api;
 }
 
-function initWorker(opts, state) {
+function initWorker(state) {
   var api = {},
       clusterphone = state.clusterphone,
       debug = _debug(state.debugName("core"));
@@ -279,6 +279,7 @@ module.exports = function(id, opts) {
 
   var state = {
     id: id,
+    opts: opts,
     clusterphone: require("clusterphone").ns("hotpotato:" + id),
     debugName: function(tag) {
       var name = "hotpotato:" + id;
@@ -295,12 +296,12 @@ module.exports = function(id, opts) {
   var handoffStrategies = require("./handoffs");
   state.handoffs = {};
   Object.keys(handoffStrategies).forEach(function(strategy) {
-    if (Array.isArray(opts.strategies) && opts.strategies.indexOf(strategy) === -1) {
+    if (Array.isArray(state.opts.strategies) && state.opts.strategies.indexOf(strategy) === -1) {
       return;
     }
     state.handoffs[strategy] = new handoffStrategies[strategy](state);
   });
 
-  instances[id] = cluster.isMaster ? initMaster(opts, state) : initWorker(opts, state);
+  instances[id] = cluster.isMaster ? initMaster(state) : initWorker(state);
   return instances[id];
 };

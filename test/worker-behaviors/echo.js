@@ -13,9 +13,28 @@ var bouncer = hotpotato("test", {
 });
 bouncer.bindTo(server);
 
+var paused = [];
+
+clusterphone.handlers.resume = function() {
+  paused.forEach(function(req) {
+    req.resume();
+  });
+
+  paused = [];
+};
+
 var wss = new WebSocketServer({noServer: true});
 
 server.on("request", function(req, res) {
+  if (req.headers.pauseme) {
+    req.pause();
+    paused.push(req);
+  }
+
+  if (req.headers.error) {
+    throw new Error();
+  }
+
   res.writeHead(203, "bacon");
 
   var data = "";

@@ -7,7 +7,8 @@ var server = require("http").createServer();
 var cluster = require("cluster");
 
 var bouncer = hotpotato("test", {
-  strategies: ["proxying"]
+  strategies: ["proxying"],
+  proxyMaxSockets: 1
 });
 bouncer.bindTo(server);
 

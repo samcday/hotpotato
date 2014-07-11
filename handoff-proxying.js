@@ -93,13 +93,14 @@ function ProxyingWorker(state) {
   // but will close a socket if there's no requests queued up to use it.
   // The max-sockets here is on a per host basis.
   var workerAgent = new Agent({
-      maxSockets: 20,
-      maxFreeSockets: 20,
+      maxSockets: state.opts.proxyMaxSockets || 20,
+      maxFreeSockets: state.opts.proxyMaxSockets || 20,
       keepAlive: true,
-      keepAliveTimeoutMsecs: 10000
+      keepAliveTimeoutMsecs: 60000
   });
 
-  var proxyInbounds = {},
+  var proxyReadWindow = state.opts.proxyReadWindow || 100,
+      proxyInbounds = {},
       proxyOutbounds = {};
 
   // TODO: this needs to handle error cases.
@@ -210,7 +211,7 @@ function ProxyingWorker(state) {
         awaitingResponse = true;
         activeProxyReq = null;
         proxyReqTimeout = null;
-      }, 100);  // TODO: make this window configurable.
+      }, proxyReadWindow);  // TODO: make this window configurable.
     };
 
     // Kick off initial.
@@ -441,10 +442,6 @@ function ProxyingWorker(state) {
       underlyingReq.write(data);
     });
 
-    req.on("end", function() {
-      res.end();
-    });
-
     res.end();
   };
 
@@ -453,7 +450,7 @@ function ProxyingWorker(state) {
         underlying = proxyInbounds[proxyId];
 
     req.on("end", function() {
-      underlying.req.emit("end");
+      underlying.req.end();
     });
 
     handleContinuedProxyRequest(req, res);
