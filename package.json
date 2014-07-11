@@ -4,7 +4,7 @@
   "description": "Hand-off HTTP connections between Node cluster workers.",
   "main": "hotpotato.js",
   "scripts": {
-    "test": "mocha test/test-*.js"
+    "test": "BLUEBIRD_DEBUG=1 mocha test/test-*.js"
   },
   "repository": {
     "type": "git",

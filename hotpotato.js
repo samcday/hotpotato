@@ -12,6 +12,17 @@ var Promise = require("bluebird"),
     http    = require("http"),
     _debug  = require("debug");
 
+function writeHttpError(socket) {
+  try {
+    socket.write("HTTP/1.1 503 Service Temporarily Unavailable\r\n\r\n");
+  }
+  finally {
+    try {
+      socket.end();
+    } catch(e) { }
+  }
+}
+
 function initMaster(opts, state) {
   var api = {},
       debug = _debug(state.debugName("core")),
@@ -84,7 +95,9 @@ function initMaster(opts, state) {
 
     return runRouter(method, url, headers).then(function(worker) {
       if (!worker) {
-        throw new Error("No worker found.");
+        debug("Failed to route an upgrade.");
+        writeHttpError(socket);
+        return Promise.reject(new Error("Router failed to direct upgrade to a new worker."));
       }
 
       var newHandoffId = handoffId++;
@@ -95,7 +108,7 @@ function initMaster(opts, state) {
         data: data
       };
 
-      return clusterphone.sendTo(worker, "handleUpgrade", upgradeHandoff, socket, true);
+      return clusterphone.sendTo(worker, "handleUpgrade", upgradeHandoff, socket, true).ackd();
     });
   };
 
@@ -213,19 +226,37 @@ function initWorker(opts, state) {
   };
 
   clusterphone.handlers.handleUpgrade = function(upgradeHandoff, socket) {
+    var handoffId = upgradeHandoff.handoffId;
+
+    debug("Got an upgrade for handoffId " + handoffId);
+
     // Reconstruct request.
     var newReq = new http.IncomingMessage(socket);
     newReq.url = upgradeHandoff.data.url;
     newReq.method = upgradeHandoff.data.method;
     newReq.headers = upgradeHandoff.data.headers;
-
     // TODO: HTTP version on req.
 
-    var buffers = upgradeHandoff.data.buffered.map(function(data) {
-      return new Buffer(data, "base64");
+    var proceed = true;
+
+    setImmediate(function() {
+      if (proceed) {
+        var buffers = upgradeHandoff.data.buffered.map(function(data) {
+          return new Buffer(data, "base64");
+        });
+        state.targetServer.emit("upgrade", newReq, socket, Buffer.concat(buffers));
+      } else {
+        debug("Decided not to go ahead with handling upgrade for handoffId " + handoffId);
+      }
     });
 
-    state.targetServer.emit("upgrade", newReq, socket, Buffer.concat(buffers));
+    socket.on("close", function() {
+      proceed = false;
+    });
+
+    socket.on("error", function() {
+      proceed = false;
+    });
   };
 
   return api;

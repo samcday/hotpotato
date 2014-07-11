@@ -1,9 +1,12 @@
 "use strict";
 
+var Promise = require("bluebird");
 var hotpotato = require("../../hotpotato");
 var server = require("http").createServer();
 var cluster = require("cluster");
+var http = require("http");
 var WebSocketServer = require("ws").Server;
+var clusterphone = require("clusterphone").ns("hotpotato-test");
 
 var bouncer = hotpotato("test", {
   strategies: ["proxying"]
@@ -32,15 +35,26 @@ server.on("request", function(req, res) {
 });
 
 server.on("upgrade", function(req, socket, head) {
-  wss.handleUpgrade(req, socket, head, function(websocket) {
-    websocket.send(JSON.stringify({
-      me: cluster.worker.id,
-      method: req.method,
-      headers: req.headers,
-      body: head.toString("utf8")
-    }));
-  });
+  if (req.headers["sec-websocket-key"]) {
+    wss.handleUpgrade(req, socket, head, function(websocket) {
+      websocket.send(JSON.stringify({
+        me: cluster.worker.id,
+        method: req.method,
+        headers: req.headers,
+        body: head.toString("utf8")
+      }));
+    });
+  } else {
+    var res = new http.ServerResponse(req);
+    res.assignSocket(socket);
+    res.writeHead(200);
+    res.end(head.toString());
+  }
 });
+
+clusterphone.handlers.ping = function() {
+  return Promise.resolve("pong");
+};
 
 if (process.env.LISTEN) {
   server.listen();
