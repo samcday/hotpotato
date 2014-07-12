@@ -8,7 +8,7 @@ var cluster = require("cluster");
 
 var bouncer = hotpotato("test", {
   strategies: ["proxying"],
-  proxyMaxSockets: 1
+  proxyMaxSockets: parseInt(process.env.PROXY_MAX_SOCKETS, 10) || 1
 });
 bouncer.bindTo(server);
 

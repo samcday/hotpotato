@@ -51,6 +51,8 @@ server.on("request", function(req, res) {
       body: data
     }));
   });
+
+  clusterphone.sendToMaster("incomingReq");
 });
 
 server.on("upgrade", function(req, socket, head) {
@@ -68,6 +70,10 @@ server.on("upgrade", function(req, socket, head) {
     res.assignSocket(socket);
     res.writeHead(200);
     res.end(head.toString());
+
+    socket.on("end", function() {
+      socket.destroy();
+    });
   }
 });
 

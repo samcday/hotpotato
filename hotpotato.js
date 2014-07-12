@@ -216,8 +216,10 @@ function initWorker(state) {
       buffered: buffered
     };
 
+    debug("Handing off upgrade.", reqData);
+
     return new Promise(function(resolve) {
-      process.nextTick(function() {
+      setImmediate(function() {
         // Bundle everything up, send it to master to be re-routed.
         resolve(clusterphone.sendToMaster("routeUpgrade", reqData, socket).ackd());
       });
@@ -256,6 +258,8 @@ function initWorker(state) {
     socket.on("error", function() {
       proceed = false;
     });
+
+    return Promise.resolve();
   };
 
   return api;

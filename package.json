@@ -4,7 +4,7 @@
   "description": "Hand-off HTTP connections between Node cluster workers.",
   "main": "hotpotato.js",
   "scripts": {
-    "test": "BLUEBIRD_DEBUG=1 mocha test/test-*.js"
+    "test": "BLUEBIRD_DEBUG=1 mocha test/test-*.js --reporter spec"
   },
   "repository": {
     "type": "git",
@@ -16,7 +16,7 @@
     "insanity"
   ],
   "author": "Sam Day <me@samcday.com.au>",
-  "license": "Unlicense",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/samcday/hotpotato/issues"
   },

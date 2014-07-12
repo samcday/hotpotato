@@ -1,5 +1,8 @@
 "use strict";
 
+var upgradeConcurrencyNum = 1000,
+    upgradeConcurrencyRounds = 10;
+
 var Promise = require("bluebird"),
     hotpotato = require("../hotpotato"),
     cluster = require("cluster"),
@@ -8,9 +11,7 @@ var Promise = require("bluebird"),
     common = require("./common");
 
 var clusterphone = require("clusterphone").ns("hotpotato-test");
-
 var expect = require("chai").expect;
-
 var bouncer = hotpotato("test");
 
 describe("hotpotato Upgrade handling", function() {
@@ -32,7 +33,9 @@ describe("hotpotato Upgrade handling", function() {
 
   afterEach(function() {
     Object.keys(cluster.workers).forEach(function(workerId) {
-      cluster.workers[workerId].kill();
+      try {
+        cluster.workers[workerId].kill();
+      } catch(e) {}
     });
   });
 
@@ -107,16 +110,23 @@ describe("hotpotato Upgrade handling", function() {
   });
 
   it("behaves correctly with many concurrent connections", function() {
+    this.timeout(5 * 60 * 1000);
+
     var self = this;
 
     bouncer.router(function() {
       return self.echo.id;
     });
 
-    var promises = [];
+    var runRound = function(resolve) {
+      var promises = [];
+      var created = 0;
+      var create = function() {
+        var i = created++;
+        if (i > upgradeConcurrencyNum) {
+          return Promise.all(promises).then(resolve);
+        }
 
-    for (var i = 0; i < 200; i++) {
-      (function(i) {
         promises.push(new Promise(function(resolve) {
           var data = "test" + (Math.random() * i);
 
@@ -141,13 +151,33 @@ describe("hotpotato Upgrade handling", function() {
             });
             resp.on("end", function() {
               expect(respText).to.eql(data);
-              resolve();
+              req.socket.destroy();
+
+              setTimeout(function() {
+                resolve();
+              }, 5000);
             });
           });
         }));
-      })(i);
-    }
 
-    return Promise.all(promises);
+        setTimeout(create, 1);
+      };
+
+      create();
+    };
+
+    var rounds = 0;
+    var go = function() {
+      rounds++;
+      if (rounds <= upgradeConcurrencyRounds) {
+        return new Promise(function(resolve) {
+          runRound(resolve);
+        }).then(function() {
+          console.log("Upgrade perf finished round " + rounds);
+          return go();
+        });
+      }
+    };
+    return go();
   });
 });

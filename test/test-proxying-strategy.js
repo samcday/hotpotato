@@ -1,5 +1,9 @@
 "use strict";
 
+var proxyConcurrencyNum = 500,
+    proxyConcurrencyRounds = 10;
+
+
 var Promise = require("bluebird"),
     hotpotato = require("../hotpotato"),
     cluster = require("cluster"),
@@ -18,6 +22,10 @@ var keepaliveAgent = new Agent({
   maxIdle: 1,
   maxSockets: 1
 });
+
+clusterphone.handlers.incomingReq = function(worker) {
+  worker.emit("test-req");
+};
 
 describe("hotpotato proxy strategy", function() {
   before(function() {
@@ -38,7 +46,9 @@ describe("hotpotato proxy strategy", function() {
 
   afterEach(function() {
     Object.keys(cluster.workers).forEach(function(workerId) {
-      cluster.workers[workerId].kill();
+      try {
+        cluster.workers[workerId].kill();
+      } catch(e) {}
     });
   });
 
@@ -250,7 +260,11 @@ describe("hotpotato proxy strategy", function() {
           throw new Error("Shouldn't have gotten a response yet.");
         });
 
-        return Promise.delay(req, 100); // TODO: not ideal. Should wait for a signal from worker.
+        return new Promise(function(resolve) {
+          self.echo.once("test-req", resolve);
+        }).then(function() {
+          return req;
+        });
       })
       .then(function(req) {
         clusterphone.sendTo(self.echo, "resume");
@@ -295,27 +309,40 @@ describe("hotpotato proxy strategy", function() {
   });
 
   it("passes requests correctly with many concurrent connections", function() {
-    this.timeout(10000);
+    this.timeout(120000);
     var self = this;
+
+    // listenPass worker has max 1 internal proxy socket for other tests that 
+    // depend on it. We want a lot more for a concurrency test.
+    try {
+      self.listenPass.kill();
+    } catch(e) {}
+    var betterListenPass = common.spawn("pass", true, { PROXY_MAX_SOCKETS: 500 });
 
     bouncer.router(function() {
       return self.echo.id;
     });
 
-    var promises = [];
+    var runRound = function(resolve) {
+      var promises = [];
+      var created = 0;
+      var create = function() {
+        var i = created++;
+        if (i > proxyConcurrencyNum) {
+          return Promise.all(promises).then(resolve);
+        }
 
-    for (var i = 0; i < 200; i++) {
-      (function(i) {
         var reqOpts = {
           path: "/passme",
           method: "PUT",
+          agent: false,
           headers: {
             host: "foo.bar",
             awesome: "sauce"
           }
         };
 
-        promises.push(common.requestToWorker(self.listenPass, reqOpts)
+        promises.push(common.requestToWorker(betterListenPass, reqOpts)
           .then(function(req) {
             req.write("Hello, world! " + i);
             req.end();
@@ -334,9 +361,27 @@ describe("hotpotato proxy strategy", function() {
               "transfer-encoding": "chunked"
             });
           }));
-      })(i);
-    }
 
-    return Promise.all(promises);
+        setTimeout(create, 1);
+      };
+
+      create();
+    };
+
+    return common.waitForWorker(betterListenPass, true).then(function() {
+      var rounds = 0;
+      var go = function() {
+        rounds++;
+        if (rounds <= proxyConcurrencyRounds) {
+          return new Promise(function(resolve) {
+            runRound(resolve);
+          }).then(function() {
+            console.log("Proxy perf finished round " + rounds);
+            return go();
+          });
+        }
+      };
+      return go();
+    });
   });
 });

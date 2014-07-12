@@ -4,8 +4,9 @@ var Promise = require("bluebird"),
     cluster = require("cluster"),
     http    = require("http");
 
-exports.spawn = function(type, listen) {
-  var env = {BEHAVIOR: type};
+exports.spawn = function(type, listen, env) {
+  env = env || {};
+  env.BEHAVIOR = type;
   if (listen) {
     env.LISTEN = true;
   }
