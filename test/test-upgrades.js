@@ -1,6 +1,6 @@
 "use strict";
 
-var upgradeConcurrencyNum = 500,
+var upgradeConcurrencyNum = 750,
     upgradeConcurrencyRounds = 10;
 
 var Promise = require("bluebird"),

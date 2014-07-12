@@ -1,6 +1,6 @@
 "use strict";
 
-var proxyConcurrencyNum = 500,
+var proxyConcurrencyNum = 750,
     proxyConcurrencyRounds = 10;
 
 
