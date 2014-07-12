@@ -3,7 +3,7 @@ node_js:
   - 0.10
 
 env:
-  - DEBUG=hotpotato:* NO_PERF=1
+  - MAIN=1 DEBUG=hotpotato:* NO_PERF=1
   - PERF=1
 
 before_script: ulimit -Sn 5000; ulimit -Hn 5000
@@ -16,4 +16,4 @@ deploy:
   on:
     tags: true
     all_branches: true
-    node_js: 0.10
+    condition: "$MAIN = 1"
