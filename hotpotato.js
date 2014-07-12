@@ -1,10 +1,9 @@
 "use strict";
 
+// TODO: handle edge case of router sending request to originating worker.
 // TODO: handle worker death.
 // TODO: handle timeouts to acks.
-// TODO: default router.
 // TODO: don't allow requests to be passed if data has already been read from them.
-// TODO: handle upgrades.
 // TODO: propagate errors on passing to the request (so server picks up clientErrors).
 
 var Promise = require("bluebird"),
