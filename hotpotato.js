@@ -25,6 +25,7 @@ function writeHttpError(socket) {
 function initMaster(state) {
   var api = {},
       debug = _debug(state.debugName("core")),
+      upgradeDebug = _debug(state.debugName("upgrades")),
       clusterphone = state.clusterphone;
 
   state.routerFn = function() {
@@ -94,13 +95,13 @@ function initMaster(state) {
 
     return runRouter(method, url, headers).then(function(worker) {
       if (!worker) {
-        debug("Failed to route an upgrade.");
+        upgradeDebug("Failed to route an upgrade.");
         writeHttpError(socket);
         return Promise.reject(new Error("Router failed to direct upgrade to a new worker."));
       }
 
       var newHandoffId = handoffId++;
-      debug("New handoffId " + newHandoffId + " for upgrade.", method, url, headers);
+      upgradeDebug("New handoffId " + newHandoffId + " for upgrade.", method, url, headers);
 
       var upgradeHandoff = {
         handoffId: newHandoffId,
@@ -117,7 +118,8 @@ function initMaster(state) {
 function initWorker(state) {
   var api = {},
       clusterphone = state.clusterphone,
-      debug = _debug(state.debugName("core"));
+      debug = _debug(state.debugName("core")),
+      upgradeDebug = _debug(state.debugName("upgrades"));
 
   state.targetServer = null;
 
@@ -216,7 +218,7 @@ function initWorker(state) {
       buffered: buffered
     };
 
-    debug("Handing off upgrade.", reqData);
+    upgradeDebug("Routing an upgrade.", reqData);
 
     return new Promise(function(resolve) {
       setImmediate(function() {
@@ -229,7 +231,7 @@ function initWorker(state) {
   clusterphone.handlers.handleUpgrade = function(upgradeHandoff, socket) {
     var handoffId = upgradeHandoff.handoffId;
 
-    debug("Got an upgrade for handoffId " + handoffId);
+    upgradeDebug("Received an upgrade for handoffId " + handoffId);
 
     // Reconstruct request.
     var newReq = new http.IncomingMessage(socket);
@@ -247,7 +249,7 @@ function initWorker(state) {
         });
         state.targetServer.emit("upgrade", newReq, socket, Buffer.concat(buffers));
       } else {
-        debug("Decided not to go ahead with handling upgrade for handoffId " + handoffId);
+        upgradeDebug("Decided not to go ahead with handling upgrade for handoffId " + handoffId);
       }
     });
 
