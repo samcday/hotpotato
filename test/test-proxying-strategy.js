@@ -295,6 +295,7 @@ describe("hotpotato proxy strategy", function() {
   });
 
   it("passes requests correctly with many concurrent connections", function() {
+    this.timeout(10000);
     var self = this;
 
     bouncer.router(function() {
