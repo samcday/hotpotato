@@ -2,7 +2,11 @@ language: node_js
 node_js:
   - 0.10
 
-env: DEBUG=hotpotato:*
+env:
+  - DEBUG=hotpotato:* NO_PERF=1
+  - PERF=1
+
+before_script: ulimit -Sn 5000; ulimit -Hn 5000
 
 deploy:
   provider: npm

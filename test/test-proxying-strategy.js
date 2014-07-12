@@ -23,6 +23,8 @@ var keepaliveAgent = new Agent({
   maxSockets: 1
 });
 
+var perfIt = process.env.NO_PERF === "1" ? xit : it;
+
 clusterphone.handlers.incomingReq = function(worker) {
   worker.emit("test-req");
 };
@@ -308,7 +310,7 @@ describe("hotpotato proxy strategy", function() {
       });
   });
 
-  it("passes requests correctly with many concurrent connections", function() {
+  perfIt("passes requests correctly with many concurrent connections", function() {
     this.timeout(120000);
     var self = this;
 

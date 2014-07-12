@@ -1,6 +1,6 @@
 "use strict";
 
-var upgradeConcurrencyNum = 1000,
+var upgradeConcurrencyNum = 500,
     upgradeConcurrencyRounds = 10;
 
 var Promise = require("bluebird"),
@@ -13,6 +13,8 @@ var Promise = require("bluebird"),
 var clusterphone = require("clusterphone").ns("hotpotato-test");
 var expect = require("chai").expect;
 var bouncer = hotpotato("test");
+
+var perfIt = process.env.NO_PERF ? xit : it;
 
 describe("hotpotato Upgrade handling", function() {
   before(function() {
@@ -109,7 +111,7 @@ describe("hotpotato Upgrade handling", function() {
     });
   });
 
-  it("behaves correctly with many concurrent connections", function() {
+  perfIt("behaves correctly with many concurrent connections", function() {
     this.timeout(5 * 60 * 1000);
 
     var self = this;
@@ -155,7 +157,7 @@ describe("hotpotato Upgrade handling", function() {
 
               setTimeout(function() {
                 resolve();
-              }, 5000);
+              }, 500);
             });
           });
         }));
